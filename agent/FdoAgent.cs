@@ -66,6 +66,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     public string Status { get; private set; } = "stopped";
     public string LastReason { get; private set; } = "";
 
+    /// <summary>Live LLM output while a decision streams in; empty when idle. Read by the UI each frame.</summary>
+    public string StreamingText { get; private set; } = "";
+    public bool IsStreaming { get; private set; }
+
     public IReadOnlyList<string> LogSnapshot()
     {
         lock (_gate) return _log.ToList();
@@ -168,7 +172,22 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             "\n\n## 当前战场快照\n" + JsonSerializer.Serialize(snapshot, json);
 
         Status = "thinking...";
-        var reply = LlmClient.Chat(SystemPrompt, context, ct);
+        IsStreaming = true;
+        StreamingText = "";
+        var buffer = new System.Text.StringBuilder();
+        string reply;
+        try
+        {
+            reply = LlmClient.ChatStream(SystemPrompt, context, chunk =>
+            {
+                buffer.Append(chunk);
+                StreamingText = buffer.ToString();
+            }, ct);
+        }
+        finally
+        {
+            IsStreaming = false;
+        }
         Status = "running";
 
         var start = reply.IndexOf('{');

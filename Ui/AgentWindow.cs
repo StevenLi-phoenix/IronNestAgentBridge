@@ -13,8 +13,10 @@ public class AgentWindow
 
     public bool Visible = true;
 
-    private Rect _rect = new(20f, 220f, 460f, 420f);
+    private Rect _rect = new(20f, 220f, 460f, 480f);
     private Vector2 _scroll;
+    private Vector2 _streamScroll;
+    private GUIStyle? _wrap;
 
     public void Draw(FdoAgent agent, AgentBridgeMod mod)
     {
@@ -46,7 +48,22 @@ public class AgentWindow
         if (fcs.Length > 0)
             GUILayout.Label(fcs);
 
-        if (agent.LastReason.Length > 0)
+        _wrap ??= new GUIStyle(GUI.skin.label) { wordWrap = true };
+
+        if (agent.IsStreaming || agent.StreamingText.Length > 0 && agent.LastReason.Length == 0)
+        {
+            GUILayout.Label(agent.IsStreaming ? "思考中 ▌" : "思考流:");
+            _streamScroll = GUILayout.BeginScrollView(_streamScroll, GUI.skin.box,
+                GUILayout.Height(150f), GUILayout.ExpandWidth(true));
+            var text = agent.StreamingText;
+            if (text.Length > 4000)
+                text = "…" + text[^4000..];
+            GUILayout.Label(text, _wrap);
+            GUILayout.EndScrollView();
+            if (agent.IsStreaming)
+                _streamScroll.y = float.MaxValue; // stick to the newest output
+        }
+        else if (agent.LastReason.Length > 0)
         {
             GUILayout.Label("最新决策:");
             GUILayout.Box(agent.LastReason, GUILayout.ExpandWidth(true));
