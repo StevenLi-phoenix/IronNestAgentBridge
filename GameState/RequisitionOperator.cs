@@ -97,7 +97,7 @@ public static class RequisitionOperator
     }
 
     /// <summary>Kick off the physical purchase. Main thread only. Result lands in LastResult and the event log.</summary>
-    public static string StartPurchase(string cardId)
+    public static string StartPurchase(string cardId, float? bearingDeg = null, float? distanceKm = null)
     {
         if (Busy)
             return "requisition operator busy with a previous card";
@@ -107,11 +107,11 @@ public static class RequisitionOperator
             return $"card '{cardId}' not on the console; available: [{string.Join(", ", available)}]";
 
         Busy = true;
-        MelonCoroutines.Start(PurchaseRoutine(cardId, card));
-        return "started (physical purchase takes ~3s; watch events for the outcome)";
+        MelonCoroutines.Start(PurchaseRoutine(cardId, card, bearingDeg, distanceKm));
+        return "started (physical purchase takes ~4s; watch events for the outcome)";
     }
 
-    private static IEnumerator PurchaseRoutine(string cardId, Transform card)
+    private static IEnumerator PurchaseRoutine(string cardId, Transform card, float? bearingDeg, float? distanceKm)
     {
         // Take FCS's own console lock so its auto-purchases and ours serialize instead of
         // colliding mid-transaction. CoroutineLock.Acquire() yields until the lock is held.
@@ -137,6 +137,30 @@ public static class RequisitionOperator
             }
             draggable.MoveToSlot();
             yield return new WaitForSeconds(0.6f);
+
+            // Recon-style cards spawn their own console controls (Prefab_ConsoleControls):
+            // a bearing dial + distance dial pair. Set them physically before buying.
+            if (bearingDeg is not null || distanceKm is not null)
+            {
+                DialOdometerPunchcardBridge? bridge = null;
+                var waitUntil = Time.realtimeSinceStartup + 4f;
+                while (bridge == null && Time.realtimeSinceStartup < waitUntil)
+                {
+                    bridge = UnityEngine.Object.FindObjectOfType<DialOdometerPunchcardBridge>();
+                    if (bridge == null)
+                        yield return new WaitForSeconds(0.25f);
+                }
+                if (bridge == null)
+                {
+                    Finish(cardId, "card accepted but no bearing/distance controls appeared (not a recon card?)");
+                    yield break;
+                }
+                if (bearingDeg is { } b && bridge.bearingDial != null)
+                    bridge.bearingDial.SetDialValue(b);
+                if (distanceKm is { } d && bridge.distanceDial != null)
+                    bridge.distanceDial.SetDialValue(d);
+                yield return new WaitForSeconds(0.5f);
+            }
 
             var console = GameObject.Find("Requisition Console");
             var button = console?.transform.FindChild("Universal Button")?.GetComponent<LookAtTarget>();

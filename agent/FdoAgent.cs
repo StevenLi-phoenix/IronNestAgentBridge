@@ -90,10 +90,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "在征用台上插入指定打孔卡并按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片(如侦查/支援卡); 弹药购买由FCS自动完成, 不要用本工具买弹。",
+      "description": "在征用台上插入指定打孔卡、设置卡片旋钮、按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(recon)必须同时给bearingDeg和distanceKm: 以炮塔为原点的极坐标, 指定侦察机起始位置与侦查方向, 飞机会沿该方向揭开侦查条带。",
       "parameters": {
         "type": "object",
-        "properties": { "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" } },
+        "properties": {
+          "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" },
+          "bearingDeg": { "type": "number", "description": "侦察类卡: 方位角(炮塔原点, 北=0顺时针)" },
+          "distanceKm": { "type": "number", "description": "侦察类卡: 距离km" }
+        },
         "required": ["cardId"]
       }
     }
@@ -361,9 +365,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         var cardId = args.TryGetProperty("cardId", out var c) ? c.GetString() ?? "" : "";
         if (cardId.Length == 0)
             return JsonSerializer.Serialize(new { error = "cardId required" });
+        float? bearing = args.TryGetProperty("bearingDeg", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetSingle() : null;
+        float? distance = args.TryGetProperty("distanceKm", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetSingle() : null;
         // The console is arbitrated by FCS's shared CoroutineLock; our purchase queues behind
         // any in-flight FCS auto-buy, so no idle gate is needed.
-        var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId), 15_000)
+        var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId, bearing, distance), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });
     }
