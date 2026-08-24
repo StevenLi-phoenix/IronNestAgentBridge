@@ -15,6 +15,9 @@ public static class RequisitionOperator
 {
     private static readonly Vector3 CardSlot = new(6.4814f, -2.4675f, -22.0968f);
 
+    /// <summary>Set by AgentBridgeMod: resolves FCS's shared Requisition CoroutineLock (or null).</summary>
+    public static Func<object?>? RequisitionLockProvider;
+
     public static bool Busy { get; private set; }
     public static string LastResult { get; private set; } = "";
 
@@ -58,6 +61,19 @@ public static class RequisitionOperator
 
     private static IEnumerator PurchaseRoutine(string cardId, Transform card)
     {
+        // Take FCS's own console lock so its auto-purchases and ours serialize instead of
+        // colliding mid-transaction. CoroutineLock.Acquire() yields until the lock is held.
+        object? consoleLock = null;
+        try { consoleLock = RequisitionLockProvider?.Invoke(); } catch { }
+        if (consoleLock != null)
+        {
+            IEnumerator? acquire = null;
+            try { acquire = consoleLock.GetType().GetMethod("Acquire")?.Invoke(consoleLock, null) as IEnumerator; }
+            catch { consoleLock = null; }
+            if (acquire != null)
+                yield return acquire;
+        }
+
         try
         {
             card.position = CardSlot;
@@ -92,6 +108,8 @@ public static class RequisitionOperator
         }
         finally
         {
+            if (consoleLock != null)
+                try { consoleLock.GetType().GetMethod("Release")?.Invoke(consoleLock, null); } catch { }
             Busy = false;
         }
     }

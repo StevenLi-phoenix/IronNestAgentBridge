@@ -121,6 +121,21 @@ public class FcsGateway
     /// Enqueue a fire task by explicit firing solution. Main thread only.
     /// Builds an ArtilleryTask inside the current Logic ALC via reflection.
     /// </summary>
+    /// <summary>
+    /// FCS's shared Requisition console lock (SharedConsoleCoordinator.Requisition, a
+    /// CoroutineLock in the Logic ALC). Re-resolved per call — never cache across F9.
+    /// Null when FCS isn't loaded; callers then proceed unguarded.
+    /// </summary>
+    public object? GetRequisitionLock()
+    {
+        var fsc = ResolveFsc(out _, out _);
+        if (fsc == null) return null;
+        var shared = fsc.GetType().GetProperty("SharedResources", AnyInstance)?.GetValue(fsc)
+                     ?? fsc.GetType().GetField("SharedResources", AnyInstance)?.GetValue(fsc);
+        if (shared == null) return null;
+        return shared.GetType().GetProperty("Requisition", AnyInstance)?.GetValue(shared);
+    }
+
     private static void TrySetPriority(object task, int priority)
     {
         // Field exists only on our patched FCS build; stock FCS just ignores priority.

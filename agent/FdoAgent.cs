@@ -86,7 +86,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "在征用台上插入指定打孔卡并按下购买按钮(物理操作)。用于非弹药类卡片(如侦查/支援卡); 弹药购买由FCS自动完成, 不要用本工具买弹。仅在FCS空闲(pending=0且左右炮无任务)时可用。",
+      "description": "在征用台上插入指定打孔卡并按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片(如侦查/支援卡); 弹药购买由FCS自动完成, 不要用本工具买弹。",
       "parameters": {
         "type": "object",
         "properties": { "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" } },
@@ -336,8 +336,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         var cardId = args.TryGetProperty("cardId", out var c) ? c.GetString() ?? "" : "";
         if (cardId.Length == 0)
             return JsonSerializer.Serialize(new { error = "cardId required" });
-        if (snapshot.Fcs.PendingCount > 0 || snapshot.Fcs.LeftTask != null || snapshot.Fcs.RightTask != null)
-            return JsonSerializer.Serialize(new { error = "FCS busy — the console is shared; retry when pending=0 and both guns idle" });
+        // The console is arbitrated by FCS's shared CoroutineLock; our purchase queues behind
+        // any in-flight FCS auto-buy, so no idle gate is needed.
         var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });

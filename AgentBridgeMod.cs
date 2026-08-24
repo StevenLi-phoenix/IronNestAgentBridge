@@ -41,6 +41,7 @@ public class AgentBridgeMod : MelonMod
     public override void OnInitializeMelon()
     {
         AgentConfig.Initialize();
+        RequisitionOperator.RequisitionLockProvider = () => _fcs.GetRequisitionLock();
         _agent = new FdoAgent(this);
         _server = new BridgeServer(this);
         try
