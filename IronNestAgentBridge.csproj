@@ -13,6 +13,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="agent\.venv\**" />
+    <None Remove="agent\.venv\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="MelonLoader">
       <HintPath>$(GameDir)\MelonLoader\net6\MelonLoader.dll</HintPath>
       <Private>false</Private>
