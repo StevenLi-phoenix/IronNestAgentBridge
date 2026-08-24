@@ -98,8 +98,19 @@ public class AgentBridgeMod : MelonMod
 
         try
         {
-            if (Keyboard.current != null && Keyboard.current.f10Key.wasPressedThisFrame)
-                _window.Visible = !_window.Visible;
+            var kb = Keyboard.current;
+            if (kb != null)
+            {
+                if (kb.f10Key.wasPressedThisFrame)
+                    _window.Visible = !_window.Visible;
+                if (kb.f11Key.wasPressedThisFrame)
+                    ToggleLlmControl();
+                if (kb.f12Key.wasPressedThisFrame)
+                    AgentConfig.PriorityQueue = !AgentConfig.PriorityQueue;
+                // F9 is FCS's plan reset; ride the same semantic — full agent reset.
+                if (kb.f9Key.wasPressedThisFrame)
+                    FullReset("F9");
+            }
         }
         catch { }
 
@@ -128,6 +139,34 @@ public class AgentBridgeMod : MelonMod
             }
             catch { }
         }
+    }
+
+    public void ToggleLlmControl()
+    {
+        AgentConfig.LlmControl = !AgentConfig.LlmControl;
+        if (_agent == null) return;
+        if (AgentConfig.LlmControl && !_agent.IsRunning) _agent.Start();
+        else if (!AgentConfig.LlmControl && _agent.IsRunning) _agent.Stop();
+        MelonLogger.Msg($"[AgentBridge] LLM control {(AgentConfig.LlmControl ? "ON" : "OFF")}");
+    }
+
+    /// <summary>
+    /// F9-style full reset: stop the agent, drop staged missions and conversation state,
+    /// rebind the scene. The agent restarts only if LLM control is enabled.
+    /// </summary>
+    public void FullReset(string reason)
+    {
+        MelonLogger.Msg($"[AgentBridge] full reset ({reason})");
+        Agent.TransactionLog.Write("reset", $"full reset: {reason}");
+        _agent?.Stop();
+        _agent?.ClearLog();
+        MissionQueue.Clear();
+        _map.Unbind();
+        _telegraph.Reset();
+        _autoStartDone = false;
+        _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
+        if (AgentConfig.LlmControl)
+            _autoStartDone = false; // rebind path will auto-start
     }
 
     /// <summary>

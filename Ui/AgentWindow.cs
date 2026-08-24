@@ -4,112 +4,131 @@ using UnityEngine;
 namespace IronNestAgentBridge.Ui;
 
 /// <summary>
-/// In-game IMGUI panel (FCS-HUD style). F10 toggles visibility.
-/// Shows agent status, last decision, action log; start/stop without leaving the game.
+/// FCS-style IMGUI HUD: pure GUI.Box + GUI.Label with hand-laid rects. This game's IL2CPP
+/// build strips the entire GUILayout family ("Method unstripping failed"), so no layout,
+/// no scroll views. GUI.Button is probed once at runtime and disabled if stripped —
+/// hotkeys (F10 panel, F11 LLM control, F12 priority queue, F9 full reset) always work.
 /// </summary>
 public class AgentWindow
 {
-    private const int WindowId = 0x1B57;
-
     public bool Visible = true;
 
-    private Rect _rect = new(20f, 220f, 460f, 480f);
-    private Vector2 _scroll;
-    private Vector2 _streamScroll;
+    private const float X = 20f;
+    private const float Y = 260f;
+    private const float W = 470f;
+    private const float LineH = 19f;
+    private const int WrapChars = 52;
+
+    private bool _buttonsBroken;
+
+    private bool Button(Rect rect, string label)
+    {
+        if (_buttonsBroken) return false;
+        try
+        {
+            return GUI.Button(rect, label);
+        }
+        catch (Exception)
+        {
+            _buttonsBroken = true; // stripped from the game build; hotkeys take over
+            return false;
+        }
+    }
+
+    private static IEnumerable<string> Wrap(string text, int maxLines, bool fromEnd = false)
+    {
+        var raw = (text ?? "").Replace("\r", "").Split('\n');
+        var lines = new List<string>();
+        foreach (var line in raw)
+        {
+            if (line.Length == 0) { lines.Add(""); continue; }
+            for (var i = 0; i < line.Length; i += WrapChars)
+                lines.Add(line.Substring(i, Math.Min(WrapChars, line.Length - i)));
+        }
+        if (lines.Count <= maxLines)
+            return lines;
+        return fromEnd ? lines.TakeLast(maxLines) : lines.Take(maxLines);
+    }
 
     public void Draw(FdoAgent agent, AgentBridgeMod mod)
     {
         if (!Visible) return;
-        // This game's interop is missing the GUILayout.Window ctor overload, so draw a
-        // fixed panel with Box + BeginArea instead of a managed window.
-        GUI.Box(_rect, "IronNest Agent Bridge  [F10]");
-        GUILayout.BeginArea(new Rect(_rect.x + 8f, _rect.y + 24f, _rect.width - 16f, _rect.height - 32f));
-        try { Body(agent, mod); }
-        finally { GUILayout.EndArea(); }
-    }
 
-    private void Body(FdoAgent agent, AgentBridgeMod mod)
-    {
-        GUILayout.BeginHorizontal();
+        // First pass: compose all lines, then size the box to fit.
+        var lines = new List<(string text, Color? color)>();
+        void Add(string text, Color? color = null) => lines.Add((text, color));
+
         var running = agent.IsRunning;
-        GUI.color = running ? Color.green : Color.red;
-        GUILayout.Label(running ? "● RUNNING" : "● STOPPED", GUILayout.Width(90f));
-        GUI.color = Color.white;
-        GUILayout.Label($"{AgentConfig.Model}", GUILayout.ExpandWidth(true));
-        if (GUILayout.Button(running ? "Stop" : "Start", GUILayout.Width(70f)))
+        Add((running ? "● RUNNING" : "● STOPPED")
+            + $"  {AgentConfig.Model}  staged:{mod.MissionQueue.Count}"
+            + $"  PQ:{(AgentConfig.PriorityQueue ? "开" : "关")}",
+            running ? Color.green : Color.red);
+        Add($"状态: {agent.Status}");
+        Add(UsageMeter.Summary);
+        Add($"context: {UsageMeter.LastPromptTokens:N0} tokens");
+
+        foreach (var l in (mod.LastFcsSummary ?? "").Split('\n'))
+            if (l.Length > 0)
+                Add(l);
+
+        var staged = mod.MissionQueue.Describe();
+        foreach (var s in staged.Take(4))
+            Add("  ⏳ " + s);
+
+        if (agent.IsStreaming)
         {
-            if (running) agent.Stop();
-            else agent.Start();
-        }
-        if (GUILayout.Button("Clear", GUILayout.Width(60f)))
-            agent.ClearLog();
-        GUILayout.EndHorizontal();
-
-        GUILayout.BeginHorizontal();
-        var llmControl = GUILayout.Toggle(AgentConfig.LlmControl, " LLM控制", GUILayout.Width(110f));
-        if (llmControl != AgentConfig.LlmControl)
-        {
-            AgentConfig.LlmControl = llmControl;
-            if (!llmControl && agent.IsRunning) agent.Stop();
-            if (llmControl && !agent.IsRunning) agent.Start();
-        }
-        var pq = GUILayout.Toggle(AgentConfig.PriorityQueue, " 优先队列", GUILayout.Width(110f));
-        if (pq != AgentConfig.PriorityQueue)
-            AgentConfig.PriorityQueue = pq;
-        GUILayout.Label($"staged: {mod.MissionQueue.Count}");
-        GUILayout.EndHorizontal();
-
-        GUILayout.Label($"状态: {agent.Status}");
-
-        var stagedList = mod.MissionQueue.Describe();
-        if (stagedList.Count > 0)
-        {
-            GUILayout.Label("优先队列 (前5):");
-            foreach (var entry in stagedList.Take(5))
-                GUILayout.Label("  " + entry);
-        }
-
-        var fcs = mod.LastFcsSummary;
-        if (fcs.Length > 0)
-            GUILayout.Label(fcs);
-
-        GUILayout.Label(Agent.UsageMeter.Summary);
-        GUILayout.Label($"context (last round): {Agent.UsageMeter.LastPromptTokens:N0} tokens");
-
-        var tools = agent.RecentToolCalls();
-        if (tools.Count > 0)
-        {
-            GUILayout.Label("最近工具调用:");
-            foreach (var t in tools.TakeLast(4))
-                GUILayout.Label("  🔧 " + t);
-        }
-
-        GUI.skin.label.wordWrap = true;
-
-        if (agent.IsStreaming || agent.StreamingText.Length > 0 && agent.LastReason.Length == 0)
-        {
-            GUILayout.Label(agent.IsStreaming ? "思考中 ▌" : "思考流:");
-            _streamScroll = GUILayout.BeginScrollView(_streamScroll, GUI.skin.box,
-                GUILayout.Height(150f), GUILayout.ExpandWidth(true));
-            var text = agent.StreamingText;
-            if (text.Length > 4000)
-                text = "…" + text[^4000..];
-            GUILayout.Label(text);
-            GUILayout.EndScrollView();
-            if (agent.IsStreaming)
-                _streamScroll.y = float.MaxValue; // stick to the newest output
+            Add("—— 思考中 ▌ ——", Color.cyan);
+            foreach (var l in Wrap(agent.StreamingText, 10, fromEnd: true))
+                Add(l, Color.cyan);
         }
         else if (agent.LastReason.Length > 0)
         {
-            GUILayout.Label("最新决策:");
-            GUILayout.Box(agent.LastReason, GUILayout.ExpandWidth(true));
+            Add("—— 最新决策 ——", Color.yellow);
+            foreach (var l in Wrap(agent.LastReason, 5))
+                Add(l, Color.yellow);
         }
 
-        GUILayout.Label("日志:");
-        _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
+        var tools = agent.RecentToolCalls();
+        foreach (var t in tools.TakeLast(2))
+            Add("🔧 " + (t.Length > WrapChars ? t[..WrapChars] + "…" : t));
+
         var log = agent.LogSnapshot();
-        for (var i = log.Count - 1; i >= 0; i--)
-            GUILayout.Label(log[i]);
-        GUILayout.EndScrollView();
+        if (log.Count > 0)
+        {
+            Add("—— 日志 ——");
+            foreach (var entry in log.TakeLast(6))
+                Add(entry.Length > WrapChars + 10 ? entry[..(WrapChars + 10)] + "…" : entry);
+        }
+
+        if (_buttonsBroken)
+            Add("按钮被游戏裁剪: F11=LLM开关 F12=优先队列 F9=全重置", Color.gray);
+
+        var buttonRowH = 26f;
+        var height = 30f + buttonRowH + lines.Count * LineH + 10f;
+        var box = new Rect(X, Y, W, height);
+        GUI.Box(box, "IronNest Agent Bridge  [F10]");
+
+        var y = box.y + 24f;
+
+        // Button row (probed; silently absent when stripped).
+        if (!_buttonsBroken)
+        {
+            if (Button(new Rect(box.x + 10f, y, 110f, 22f), running ? "停止 LLM" : "启动 LLM"))
+                mod.ToggleLlmControl();
+            if (Button(new Rect(box.x + 126f, y, 110f, 22f), $"优先队列:{(AgentConfig.PriorityQueue ? "开" : "关")}"))
+                AgentConfig.PriorityQueue = !AgentConfig.PriorityQueue;
+            if (Button(new Rect(box.x + 242f, y, 90f, 22f), "全重置"))
+                mod.FullReset("panel button");
+        }
+        y += buttonRowH;
+
+        var prevColor = GUI.color;
+        foreach (var (text, color) in lines)
+        {
+            GUI.color = color ?? Color.white;
+            GUI.Label(new Rect(box.x + 10f, y, W - 20f, LineH + 2f), text);
+            y += LineH;
+        }
+        GUI.color = prevColor;
     }
 }
