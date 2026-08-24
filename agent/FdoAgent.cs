@@ -85,6 +85,18 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {
     "type": "function",
     "function": {
+      "name": "requisition_card",
+      "description": "在征用台上插入指定打孔卡并按下购买按钮(物理操作)。用于非弹药类卡片(如侦查/支援卡); 弹药购买由FCS自动完成, 不要用本工具买弹。仅在FCS空闲(pending=0且左右炮无任务)时可用。",
+      "parameters": {
+        "type": "object",
+        "properties": { "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" } },
+        "required": ["cardId"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "solve_target",
       "description": "由观测线/距离圆精确解算目标位置, 返回km坐标和炮塔射击诸元(bearingDeg/distanceKm)。所有三角定位必须用本工具。",
       "parameters": {
@@ -319,6 +331,18 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         TransactionLog.Write("compact", "conversation compacted", new { summary });
     }
 
+    private string ExecuteRequisition(JsonElement args, StateSnapshotDto snapshot)
+    {
+        var cardId = args.TryGetProperty("cardId", out var c) ? c.GetString() ?? "" : "";
+        if (cardId.Length == 0)
+            return JsonSerializer.Serialize(new { error = "cardId required" });
+        if (snapshot.Fcs.PendingCount > 0 || snapshot.Fcs.LeftTask != null || snapshot.Fcs.RightTask != null)
+            return JsonSerializer.Serialize(new { error = "FCS busy — the console is shared; retry when pending=0 and both guns idle" });
+        var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId), 15_000)
+            .GetAwaiter().GetResult();
+        return JsonSerializer.Serialize(new { result });
+    }
+
     private void Decide(List<BridgeEvent> events, CancellationToken ct)
     {
         var snapshot = MainThread.Run(() => _mod.BuildSnapshot(), 15_000).GetAwaiter().GetResult();
@@ -339,6 +363,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             {
                 "grid_to_km" => GridMath.GridToKm(args, turretKm),
                 "solve_target" => GridMath.SolveTarget(args, turretKm),
+                "requisition_card" => ExecuteRequisition(args, snapshot),
                 _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
             };
             var argsText = args.GetRawText();
