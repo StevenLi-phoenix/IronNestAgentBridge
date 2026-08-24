@@ -13,9 +13,9 @@ public class AgentWindow
 {
     public bool Visible = true;
 
-    private const float X = 20f;
-    private const float Y = 260f;
+    private const float Y = 40f;
     private const float W = 470f;
+    private static float X => Screen.width - W - 20f; // top-right, away from the FCS HUD
     private const float LineH = 19f;
     private const int WrapChars = 52;
 

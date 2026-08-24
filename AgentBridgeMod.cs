@@ -35,6 +35,9 @@ public class AgentBridgeMod : MelonMod
 
     public string LastFcsSummary { get; private set; } = "";
 
+    /// <summary>Mirrors Application.isFocused for background threads; agent pauses while false.</summary>
+    public static volatile bool GameFocused = true;
+
     public override void OnInitializeMelon()
     {
         AgentConfig.Initialize();
@@ -71,6 +74,7 @@ public class AgentBridgeMod : MelonMod
 
     public override void OnUpdate()
     {
+        GameFocused = UnityEngine.Application.isFocused;
         MainThread.Pump();
 
         var now = UnityEngine.Time.realtimeSinceStartup;

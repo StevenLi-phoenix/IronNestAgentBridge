@@ -211,6 +211,17 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         {
             try
             {
+                // Mirror FCS's focus gate: no decisions (and no token spend) while the game
+                // is in the background; FCS pauses its automation there anyway.
+                if (!AgentBridgeMod.GameFocused)
+                {
+                    Status = "paused (game unfocused)";
+                    if (ct.WaitHandle.WaitOne(1_000)) break;
+                    continue;
+                }
+                if (Status == "paused (game unfocused)")
+                    Status = "running";
+
                 var events = EventLog.WaitForEvents(since, PollSliceMs);
                 if (ct.IsCancellationRequested) break;
 
