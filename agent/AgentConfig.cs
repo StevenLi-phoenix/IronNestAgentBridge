@@ -24,7 +24,7 @@ public static class AgentConfig
         _maxTokens = _category.CreateEntry("MaxTokens", 393216);
         _autoStart = _category.CreateEntry("AutoStart", true, description: "Start the FDO agent automatically once the scene binds");
         _llmControl = _category.CreateEntry("LlmControl", false, description: "Master switch: LLM is allowed to control fire missions (default off; F11 or panel button toggles)");
-        _priorityQueue = _category.CreateEntry("PriorityQueue", true, description: "Stage LLM missions in an internal priority queue instead of flooding the FCS");
+        _priorityQueue = _category.CreateEntry("PriorityQueue", false, description: "Optional: stage missions in a bridge-side queue (dispatch-time revalidation, FCS kept shallow). Default off — FCS has native priority ordering.");
         _fcsQueueDepth = _category.CreateEntry("FcsQueueDepth", 2, description: "Dispatch from the priority queue only while FCS pending tasks are below this");
         InitializePricing();
     }
