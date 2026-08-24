@@ -16,7 +16,6 @@ public class AgentWindow
     private Rect _rect = new(20f, 220f, 460f, 480f);
     private Vector2 _scroll;
     private Vector2 _streamScroll;
-    private GUIStyle? _wrap;
 
     public void Draw(FdoAgent agent, AgentBridgeMod mod)
     {
@@ -48,7 +47,7 @@ public class AgentWindow
         if (fcs.Length > 0)
             GUILayout.Label(fcs);
 
-        _wrap ??= new GUIStyle(GUI.skin.label) { wordWrap = true };
+        GUI.skin.label.wordWrap = true;
 
         if (agent.IsStreaming || agent.StreamingText.Length > 0 && agent.LastReason.Length == 0)
         {
@@ -58,7 +57,7 @@ public class AgentWindow
             var text = agent.StreamingText;
             if (text.Length > 4000)
                 text = "…" + text[^4000..];
-            GUILayout.Label(text, _wrap);
+            GUILayout.Label(text);
             GUILayout.EndScrollView();
             if (agent.IsStreaming)
                 _streamScroll.y = float.MaxValue; // stick to the newest output
