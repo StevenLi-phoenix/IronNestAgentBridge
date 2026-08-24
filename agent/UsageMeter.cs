@@ -14,8 +14,26 @@ public static class UsageMeter
     /// <summary>Prompt size of the most recent LLM round — the live context-window footprint.</summary>
     public static long LastPromptTokens { get; private set; }
 
+    /// <summary>DeepSeek off-peak window: 00:30–08:30 Beijing time (UTC+8), all prices halved.</summary>
+    public static bool IsOffPeak
+    {
+        get
+        {
+            var beijing = DateTime.UtcNow.AddHours(8).TimeOfDay;
+            return beijing >= new TimeSpan(0, 30, 0) && beijing < new TimeSpan(8, 30, 0);
+        }
+    }
+
+    private static double _cost; // accumulated with the peak/off-peak factor active per round
+
     public static void AddRound(long prompt, long completion, long cacheHit, long cacheMiss)
     {
+        var factor = IsOffPeak ? 0.5 : 1.0;
+        var input = cacheHit + cacheMiss > 0
+            ? cacheHit / 1e6 * AgentConfig.PriceInputCacheHit + cacheMiss / 1e6 * AgentConfig.PriceInputCacheMiss
+            : prompt / 1e6 * AgentConfig.PriceInputCacheMiss;
+        var roundCost = factor * (input + completion / 1e6 * AgentConfig.PriceOutput);
+
         lock (Gate)
         {
             LastPromptTokens = prompt;
@@ -24,27 +42,17 @@ public static class UsageMeter
             CacheHitTokens += cacheHit;
             CacheMissTokens += cacheMiss;
             Rounds++;
+            _cost += roundCost;
         }
         TransactionLog.Write("usage",
-            $"round: in={prompt} (hit {cacheHit}/miss {cacheMiss}) out={completion}",
-            new { prompt, completion, cacheHit, cacheMiss, totalCost = EstimatedCost });
+            $"round: in={prompt} (hit {cacheHit}/miss {cacheMiss}) out={completion} {(factor < 1 ? "off-peak" : "peak")}",
+            new { prompt, completion, cacheHit, cacheMiss, roundCost, totalCost = EstimatedCost });
     }
 
-    /// <summary>Cost in the currency of the configured prices. Cache-hit input billed separately when prices set.</summary>
+    /// <summary>Accumulated cost in the configured currency, peak/off-peak applied per round.</summary>
     public static double EstimatedCost
     {
-        get
-        {
-            lock (Gate)
-            {
-                // If cache split is reported, bill hit/miss separately; otherwise flat input price on prompt.
-                var input = CacheHitTokens + CacheMissTokens > 0
-                    ? CacheHitTokens / 1e6 * AgentConfig.PriceInputCacheHit
-                      + CacheMissTokens / 1e6 * AgentConfig.PriceInputCacheMiss
-                    : PromptTokens / 1e6 * AgentConfig.PriceInputCacheMiss;
-                return input + CompletionTokens / 1e6 * AgentConfig.PriceOutput;
-            }
-        }
+        get { lock (Gate) return _cost; }
     }
 
     public static string Summary
@@ -53,7 +61,8 @@ public static class UsageMeter
         {
             lock (Gate)
                 return $"tokens: in {PromptTokens:N0} (cache hit {CacheHitTokens:N0}) out {CompletionTokens:N0}"
-                     + $" · {Rounds} rounds · ≈{EstimatedCost:F3} {AgentConfig.PriceCurrency}";
+                     + $" · {Rounds} rounds · ≈{EstimatedCost:F3} {AgentConfig.PriceCurrency}"
+                     + (IsOffPeak ? " (谷时半价)" : "");
         }
     }
 }
