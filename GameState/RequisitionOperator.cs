@@ -44,6 +44,58 @@ public static class RequisitionOperator
         return match;
     }
 
+    /// <summary>
+    /// Dump the Requisition Console hierarchy: object names, components, dial values and
+    /// card ids — for reverse-engineering extra controls (scout plane start/bearing knobs).
+    /// </summary>
+    public static object InspectConsole()
+    {
+        var roots = new List<object>();
+        foreach (var rootName in new[] { "Requisition Console", "Console Box" })
+        {
+            var root = GameObject.Find(rootName);
+            if (root == null)
+            {
+                roots.Add(new { root = rootName, error = "not found" });
+                continue;
+            }
+            var nodes = new List<object>();
+            void Walk(Transform t, string path, int depth)
+            {
+                if (depth > 6) return;
+                var comps = new List<string>();
+                foreach (var c in t.GetComponents<Component>())
+                {
+                    if (c == null) continue;
+                    string typeName;
+                    try { typeName = c.GetIl2CppType().Name; } catch { continue; }
+                    if (typeName is "Transform" or "MeshFilter" or "MeshRenderer" or "BoxCollider" or "MeshCollider")
+                        continue;
+                    var extra = "";
+                    try
+                    {
+                        var dial = c.TryCast<DialInteractable>();
+                        if (dial != null) extra = $" value?";
+                        var punch = c.TryCast<PunchcardRuntime>();
+                        if (punch != null) extra = $" id={punch.CurrentDefinition?.ID}";
+                    }
+                    catch { }
+                    comps.Add(typeName + extra);
+                }
+                if (comps.Count > 0)
+                    nodes.Add(new { path, comps });
+                for (var i = 0; i < t.childCount; i++)
+                {
+                    var child = t.GetChild(i);
+                    Walk(child, path + "/" + child.name, depth + 1);
+                }
+            }
+            Walk(root.transform, rootName, 0);
+            roots.Add(new { root = rootName, nodes });
+        }
+        return roots;
+    }
+
     /// <summary>Kick off the physical purchase. Main thread only. Result lands in LastResult and the event log.</summary>
     public static string StartPurchase(string cardId)
     {

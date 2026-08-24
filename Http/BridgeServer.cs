@@ -115,6 +115,12 @@ public class BridgeServer
                 TryWrite(ctx, 200, new { result });
                 break;
             }
+            case ("GET", "/console"):
+            {
+                var info = MainThread.Run(() => GameState.RequisitionOperator.InspectConsole()).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, info);
+                break;
+            }
             case ("POST", "/scoutplane"):
             {
                 var req = ReadBody<ScoutPlaneRequest>(ctx);
