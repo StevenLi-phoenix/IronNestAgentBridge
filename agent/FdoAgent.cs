@@ -42,6 +42,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   误差被放大。盲射=效力侦察(ranging fire): 第一发的价值是炸开迷雾揭示目标。
   弹着揭示目标(entity_revealed事件)后, 立即用entityId对其精确补射, 那才是摧毁手段。
   同一目标若有"方位角+距离"组合优先用它, 且优先选距目标近的观测员的数据。
+- 弹药成本(征用点): STAR=2, HE/AP=18。因此侦察性盲射一律用STAR——它的任务是照亮/
+  揭示区域, 不是摧毁; 用AP/HE盲射等于花9倍的钱赌一发不准的弹。只有对已揭示目标
+  (entityId)才花HE/AP做摧毁性射击。例外: 统帅部明确限制弹种时从其指令。
 - 每次决策输出JSON, 两种action格式, 每个action可带priority(0-100, 默认50):
   {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE", "priority": 50},
                {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP", "priority": 30}],
