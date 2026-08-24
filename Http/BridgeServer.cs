@@ -115,6 +115,15 @@ public class BridgeServer
                 TryWrite(ctx, 200, new { result });
                 break;
             }
+            case ("POST", "/scoutplane"):
+            {
+                var req = ReadBody<ScoutPlaneRequest>(ctx);
+                if (req == null) { TryWrite(ctx, 400, new { error = "need {kmX, kmY, bearingDeg}" }); break; }
+                var result = MainThread.Run(() => GameState.ScoutPlaneOperator.Spawn(req.KmX, req.KmY, req.BearingDeg))
+                    .GetAwaiter().GetResult();
+                TryWrite(ctx, 200, result);
+                break;
+            }
             case ("POST", "/draw/clear"):
             {
                 var result = MainThread.Run(() => GameState.MapDrawer.ClearAll()).GetAwaiter().GetResult();
@@ -145,6 +154,13 @@ public class BridgeServer
     {
         public string? Which { get; set; }
         public string[]? Lines { get; set; }
+    }
+
+    private class ScoutPlaneRequest
+    {
+        public float KmX { get; set; }
+        public float KmY { get; set; }
+        public float BearingDeg { get; set; }
     }
 
     private class DrawRequest

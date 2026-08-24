@@ -16,5 +16,5 @@ if ($game) {
 }
 
 $project = Join-Path $PSScriptRoot "..\IronNestAgentBridge.csproj"
-dotnet build $project -c $Configuration
+dotnet build $project -c $Configuration -m:10
 exit $LASTEXITCODE
