@@ -118,7 +118,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 """;
 
     private const int PollSliceMs = 5_000;
-    private const int RecheckAfterSlices = 5; // 5 x 5s = idle re-evaluation cadence
+    private const int RecheckAfterSlices = 12; // 12 x 5s = 60s idle re-evaluation cadence
     private const double MapLocalToKm = 3.8164;
     private const double MapOffsetX = 10.016;
     private const double MapOffsetY = 5.235;
