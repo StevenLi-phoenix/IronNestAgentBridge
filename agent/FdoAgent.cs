@@ -23,9 +23,12 @@ public class FdoAgent
 FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行进度。
 规则:
 - 遵守统帅部电文中的弹药限制与优先目标指令
-- 弹种选择: armour=0的目标(步兵/无甲车辆)用HE即可; armour>=1的目标HE大概率"未击穿",
-  直接用APHE(兼具穿甲和爆破)或AP。role含Fortification或rawId为supplycash/
-  hostilebunker等工事类=地下/加固目标, 必须AP系穿甲弹。immuneShells非空时严禁选名单内弹种
+- 弹种选择: armour=0的单体目标(步兵/无甲车辆)用HE; armour>=1的单体目标HE大概率
+  "未击穿", 用AP。APHE是集群杀伤弹(grouping kill): 穿甲后爆破, 用于多个目标
+  聚集在一片区域时一发多杀(如相邻的装甲目标群/装甲与步兵混编群)——看到实体表中
+  多个目标方位角/距离彼此接近时优先考虑一发APHE覆盖, 而不是逐个排单发。
+  role含Fortification或rawId为supplycash/hostilebunker等工事类=地下/加固目标,
+  必须AP。immuneShells非空时严禁选名单内弹种
 - 反炮兵威胁下优先高价值目标
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
