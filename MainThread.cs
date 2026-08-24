@@ -27,6 +27,14 @@ public static class MainThread
     public static Task Run(Action action, int timeoutMs = 10_000)
         => Run<object?>(() => { action(); return null; }, timeoutMs);
 
+    /// <summary>
+    /// Fire-and-forget: enqueue for the main thread without waiting. For cosmetic work
+    /// (map plotting etc.) that must never block the agent loop — if the game is paused
+    /// it simply runs whenever the loop resumes.
+    /// </summary>
+    public static void Post(Action action)
+        => Queue.Enqueue(() => { try { action(); } catch { /* cosmetic */ } });
+
     /// <summary>Called from AgentBridgeMod.OnUpdate every frame.</summary>
     public static void Pump()
     {

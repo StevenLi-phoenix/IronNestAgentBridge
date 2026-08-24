@@ -384,8 +384,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             {
                 var json = GridMath.SolveTarget(a, turretKm, out var geometry);
                 if (geometry.Solution != null)
-                    try { MainThread.Run(() => PlotGeometry(geometry), 10_000).GetAwaiter().GetResult(); }
-                    catch { /* plotting is cosmetic */ }
+                    MainThread.Post(() => PlotGeometry(geometry)); // cosmetic — never blocks the agent
                 return json;
             }
 
