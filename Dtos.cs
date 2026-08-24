@@ -101,4 +101,6 @@ public class FireMissionRequest
     public float? DistanceKm { get; set; }
     public string Shell { get; set; } = "HE";
     public int MarkerId { get; set; } = 4;   // which map marker to commandeer for entity targeting
+    // 0-100; >=90 (counter-battery) skips the FCS pairing window and wins gun assignment first.
+    public int Priority { get; set; } = 50;
 }

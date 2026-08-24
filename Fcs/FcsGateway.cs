@@ -121,7 +121,13 @@ public class FcsGateway
     /// Enqueue a fire task by explicit firing solution. Main thread only.
     /// Builds an ArtilleryTask inside the current Logic ALC via reflection.
     /// </summary>
-    public string EnqueueByBearing(float bearingDeg, float distanceKm, string shell, int targetId)
+    private static void TrySetPriority(object task, int priority)
+    {
+        // Field exists only on our patched FCS build; stock FCS just ignores priority.
+        try { task.GetType().GetField("priority")?.SetValue(task, priority); } catch { }
+    }
+
+    public string EnqueueByBearing(float bearingDeg, float distanceKm, string shell, int targetId, int priority = 50)
     {
         var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
         if (fsc == null)
@@ -145,6 +151,7 @@ public class FcsGateway
         taskType.GetField("distance")!.SetValue(task, distanceKm);
         taskType.GetField("position")!.SetValue(task, Vector3.zero);
         taskType.GetField("bulletType")!.SetValue(task, bullet);
+        TrySetPriority(task, priority);
 
         var enqueue = fsc.GetType().GetMethod("EnqueueTask", AnyInstance);
         if (enqueue == null)
@@ -158,7 +165,7 @@ public class FcsGateway
     /// `markerId` onto the target; this calls MapTable.GetMarkTarget(markerId) so the
     /// bearing/distance/grid come from the exact same code path as a human click.
     /// </summary>
-    public string EnqueueFromMarker(int markerId, string shell)
+    public string EnqueueFromMarker(int markerId, string shell, int priority = 50)
     {
         var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
         if (fsc == null)
@@ -184,6 +191,7 @@ public class FcsGateway
         catch { return $"unknown shell type '{shell}'"; }
         taskType.GetField("targetId")!.SetValue(task, markerId);
         taskType.GetField("bulletType")!.SetValue(task, bullet);
+        TrySetPriority(task, priority);
 
         fsc.GetType().GetMethod("EnqueueTask", AnyInstance)!.Invoke(fsc, new[] { task });
         return "ok";

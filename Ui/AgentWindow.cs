@@ -41,11 +41,44 @@ public class AgentWindow
             agent.ClearLog();
         GUILayout.EndHorizontal();
 
+        GUILayout.BeginHorizontal();
+        var llmControl = GUILayout.Toggle(AgentConfig.LlmControl, " LLM控制", GUILayout.Width(110f));
+        if (llmControl != AgentConfig.LlmControl)
+        {
+            AgentConfig.LlmControl = llmControl;
+            if (!llmControl && agent.IsRunning) agent.Stop();
+            if (llmControl && !agent.IsRunning) agent.Start();
+        }
+        var pq = GUILayout.Toggle(AgentConfig.PriorityQueue, " 优先队列", GUILayout.Width(110f));
+        if (pq != AgentConfig.PriorityQueue)
+            AgentConfig.PriorityQueue = pq;
+        GUILayout.Label($"staged: {mod.MissionQueue.Count}");
+        GUILayout.EndHorizontal();
+
         GUILayout.Label($"状态: {agent.Status}");
+
+        var stagedList = mod.MissionQueue.Describe();
+        if (stagedList.Count > 0)
+        {
+            GUILayout.Label("优先队列 (前5):");
+            foreach (var entry in stagedList.Take(5))
+                GUILayout.Label("  " + entry);
+        }
 
         var fcs = mod.LastFcsSummary;
         if (fcs.Length > 0)
             GUILayout.Label(fcs);
+
+        GUILayout.Label(Agent.UsageMeter.Summary);
+        GUILayout.Label($"context (last round): {Agent.UsageMeter.LastPromptTokens:N0} tokens");
+
+        var tools = agent.RecentToolCalls();
+        if (tools.Count > 0)
+        {
+            GUILayout.Label("最近工具调用:");
+            foreach (var t in tools.TakeLast(4))
+                GUILayout.Label("  🔧 " + t);
+        }
 
         GUI.skin.label.wordWrap = true;
 

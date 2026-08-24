@@ -24,6 +24,8 @@ public class AgentBridgeMod : MelonMod
     private BridgeServer? _server;
     private FdoAgent? _agent;
     private readonly AgentWindow _window = new();
+    public MissionQueue MissionQueue { get; } = new();
+    private float _nextDispatch;
 
     private float _nextBindAttempt;
     private float _nextMapPoll;
@@ -101,10 +103,17 @@ public class AgentBridgeMod : MelonMod
         }
         catch { }
 
-        if (!_autoStartDone && _map.IsBound && AgentConfig.AutoStart && _agent is { IsRunning: false })
+        if (!_autoStartDone && _map.IsBound && AgentConfig.AutoStart && AgentConfig.LlmControl && _agent is { IsRunning: false })
         {
             _autoStartDone = true;
             _agent.Start();
+        }
+
+        if (now >= _nextDispatch)
+        {
+            _nextDispatch = now + 2f;
+            try { DispatchFromQueue(); }
+            catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] dispatch failed: {ex.Message}"); }
         }
 
         if (now >= _nextFcsSummary)
@@ -118,6 +127,41 @@ public class AgentBridgeMod : MelonMod
                                  (s.RightTask != null ? $"\nR: {s.RightTask}" : "");
             }
             catch { }
+        }
+    }
+
+    /// <summary>
+    /// Drain the agent's priority queue into the FCS while its physical queue stays shallow.
+    /// Runs on the main thread. Re-validates each target at dispatch time.
+    /// </summary>
+    private void DispatchFromQueue()
+    {
+        if (!_map.IsBound || MissionQueue.Count == 0)
+            return;
+
+        var status = _fcs.ReadStatus();
+        if (!status.LogicLoaded || status.PendingCount >= AgentConfig.FcsQueueDepth)
+            return;
+
+        var slots = AgentConfig.FcsQueueDepth - status.PendingCount;
+        for (var i = 0; i < slots; i++)
+        {
+            var mission = MissionQueue.PopBest();
+            if (mission == null)
+                return;
+
+            // Dispatch-time revalidation: a staged entity strike is dropped if the target
+            // died or slipped back into fog while waiting.
+            if (!string.IsNullOrEmpty(mission.Request.EntityId) && _map.FindEntity(mission.Request.EntityId!) == null)
+            {
+                EventLog.Append("fcs_task_update", "fcs",
+                    $"staged mission on {mission.Label} dropped: target destroyed or no longer visible");
+                continue;
+            }
+
+            var result = QueueFireMission(mission.Request);
+            EventLog.Append("fcs_task_update", "fcs",
+                $"dispatched P{mission.Priority} {mission.Label} ({mission.Request.Shell}) -> {result}");
         }
     }
 
@@ -190,17 +234,17 @@ public class AgentBridgeMod : MelonMod
         var markerId = NextMarkerId();
         if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))
         {
-            var result = _fcs.EnqueueFromMarker(markerId, req.Shell);
+            var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority);
             if (result == "ok")
                 EventLog.Append("fcs_task_update", "fcs",
-                    $"fire mission queued on {label} ({req.Shell}) as marker {markerId}");
+                    $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as marker {markerId}");
             return result;
         }
 
         // No marker available — fall back to direct injection, display-only loss.
         if (req.BearingDeg is float b2 && req.DistanceKm is float d2)
         {
-            var result = _fcs.EnqueueByBearing(b2, d2, req.Shell, 0);
+            var result = _fcs.EnqueueByBearing(b2, d2, req.Shell, 0, req.Priority);
             if (result == "ok")
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued at {label} ({req.Shell}), no marker available");

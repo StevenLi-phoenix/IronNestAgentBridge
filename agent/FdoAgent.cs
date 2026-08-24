@@ -42,10 +42,15 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   误差被放大。盲射=效力侦察(ranging fire): 第一发的价值是炸开迷雾揭示目标。
   弹着揭示目标(entity_revealed事件)后, 立即用entityId对其精确补射, 那才是摧毁手段。
   同一目标若有"方位角+距离"组合优先用它, 且优先选距目标近的观测员的数据。
-- 每次决策输出JSON, 两种action格式:
-  {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE"},
-               {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP"}], "reason": "..."}
+- 每次决策输出JSON, 两种action格式, 每个action可带priority(0-100, 默认50):
+  {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE", "priority": 50},
+               {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP", "priority": 30}],
+   "reason": "..."}
   不开火时输出 {"actions": [], "reason": "..."}
+- priority规则: 反炮兵/敌方炮兵威胁=90以上(FCS会跳过凑单等待立即抢占下一门空炮);
+  统帅部点名的优先目标=70; 常规高价值(仓库/工事/指挥所)=60; 普通目标=50;
+  低价值步兵/补刀=30。你的任务先进入内部优先队列, 由mod按优先级在FCS空闲时下发,
+  下发前会自动复核目标存活——所以你可以放心把发现的目标都排上, 优先级排对即可。
 - 队列纪律(最重要): fcs.pendingTasks列出所有待执行任务(若无此字段则以pendingCount计数),
   每个任务执行约需1分钟, 队列会自动逐个打完。目标在pendingTasks/你的决策历史里已有
   未执行完的任务时, 严禁再排——"已下达"不等于"已打完", 你看不到弹着不代表任务丢了。
@@ -116,6 +121,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     private readonly object _gate = new();
     private readonly List<string> _history = new();
     private readonly List<string> _log = new();
+    private readonly List<string> _recentToolCalls = new();
+
+    public List<string> RecentToolCalls()
+    {
+        lock (_gate) return _recentToolCalls.ToList();
+    }
 
     private Thread? _thread;
     private CancellationTokenSource? _cts;
@@ -138,6 +149,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     public void Start()
     {
         if (IsRunning) return;
+        if (!AgentConfig.LlmControl)
+        {
+            Status = "LLM control disabled";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(AgentConfig.ApiKey))
         {
             Status = "no ApiKey — set [AgentBridge] ApiKey in UserData\\MelonPreferences.cfg";
@@ -162,7 +178,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         lock (_gate) { _log.Clear(); _history.Clear(); }
     }
 
-    private void AppendLog(string text)
+    private void AppendLog(string text, string type = "agent", object? data = null)
     {
         lock (_gate)
         {
@@ -170,6 +186,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             if (_log.Count > 300)
                 _log.RemoveRange(0, _log.Count - 300);
         }
+        TransactionLog.Write(type, text, data);
     }
 
     private void Loop(CancellationToken ct)
@@ -226,21 +243,37 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         lock (_gate)
             historyBlock = _history.Count == 0 ? "(无)" : string.Join("\n", _history.TakeLast(10));
 
+        var staged = _mod.MissionQueue.Describe();
         var context =
             "## 新事件\n" + string.Join("\n", events.Select(e => $"[{e.Source}/{e.Type}] {e.Text}")) +
             "\n\n## 你此前的决策(最近10条)\n" + historyBlock +
+            "\n\n## 内部优先队列(已staged待下发, 勿重复)\n" +
+            (staged.Count == 0 ? "(空)" : string.Join("\n", staged)) +
             "\n\n## 当前战场快照\n" + JsonSerializer.Serialize(snapshot, json);
 
         var turretKm = (
             x: MapOffsetX + snapshot.TurretMapX * MapLocalToKm,
             y: MapOffsetY + snapshot.TurretMapY * MapLocalToKm);
 
-        string ExecuteTool(string name, JsonElement args) => name switch
+        string ExecuteTool(string name, JsonElement args)
         {
-            "grid_to_km" => GridMath.GridToKm(args, turretKm),
-            "solve_target" => GridMath.SolveTarget(args, turretKm),
-            _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
-        };
+            var result = name switch
+            {
+                "grid_to_km" => GridMath.GridToKm(args, turretKm),
+                "solve_target" => GridMath.SolveTarget(args, turretKm),
+                _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
+            };
+            var argsText = args.GetRawText();
+            var entry = $"{name}({(argsText.Length > 120 ? argsText[..120] + "…" : argsText)}) → {result}";
+            lock (_gate)
+            {
+                _recentToolCalls.Add(entry);
+                if (_recentToolCalls.Count > 20)
+                    _recentToolCalls.RemoveRange(0, _recentToolCalls.Count - 20);
+            }
+            TransactionLog.Write("tool", entry, new { name, args = argsText, result });
+            return result;
+        }
 
         Status = "thinking...";
         IsStreaming = true;
@@ -272,7 +305,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         using var doc = JsonDocument.Parse(reply[start..(end + 1)]);
         var reason = doc.RootElement.TryGetProperty("reason", out var r) ? r.GetString() ?? "" : "";
         LastReason = reason;
-        AppendLog($"决策: {reason}");
+        AppendLog($"决策: {reason}", "decision",
+            new { events = events.Select(e => $"{e.Source}/{e.Type}").ToList(), reply });
 
         var stamp = DateTime.Now.ToString("HH:mm:ss");
         if (!doc.RootElement.TryGetProperty("actions", out var actions) || actions.GetArrayLength() == 0)
@@ -289,11 +323,22 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 BearingDeg = action.TryGetProperty("bearingDeg", out var b) ? b.GetSingle() : null,
                 DistanceKm = action.TryGetProperty("distanceKm", out var d) ? d.GetSingle() : null,
                 Shell = action.TryGetProperty("shell", out var s) ? s.GetString() ?? "HE" : "HE",
+                Priority = action.TryGetProperty("priority", out var p) ? Math.Clamp(p.GetInt32(), 0, 100) : 50,
             };
             var label = req.EntityId ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
-            var result = MainThread.Run(() => _mod.QueueFireMission(req), 15_000).GetAwaiter().GetResult();
-            AppendLog($"fire {label} ({req.Shell}) -> {result}");
-            lock (_gate) _history.Add($"[{stamp}] fire {label} {req.Shell} -> {result}");
+
+            if (AgentConfig.PriorityQueue)
+            {
+                _mod.MissionQueue.Add(req, req.Priority, label);
+                AppendLog($"staged P{req.Priority} {label} ({req.Shell})", "staged", req);
+                lock (_gate) _history.Add($"[{stamp}] staged P{req.Priority} {label} {req.Shell}");
+            }
+            else
+            {
+                var result = MainThread.Run(() => _mod.QueueFireMission(req), 15_000).GetAwaiter().GetResult();
+                AppendLog($"fire {label} ({req.Shell}, P{req.Priority}) -> {result}", "fire", new { req, result });
+                lock (_gate) _history.Add($"[{stamp}] fire {label} {req.Shell} -> {result}");
+            }
         }
     }
 }

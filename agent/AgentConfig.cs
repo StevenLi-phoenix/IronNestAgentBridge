@@ -11,6 +11,9 @@ public static class AgentConfig
     private static MelonPreferences_Entry<string> _model = null!;
     private static MelonPreferences_Entry<int> _maxTokens = null!;
     private static MelonPreferences_Entry<bool> _autoStart = null!;
+    private static MelonPreferences_Entry<bool> _llmControl = null!;
+    private static MelonPreferences_Entry<bool> _priorityQueue = null!;
+    private static MelonPreferences_Entry<int> _fcsQueueDepth = null!;
 
     public static void Initialize()
     {
@@ -20,7 +23,43 @@ public static class AgentConfig
         _model = _category.CreateEntry("Model", "deepseek-v4-flash");
         _maxTokens = _category.CreateEntry("MaxTokens", 393216);
         _autoStart = _category.CreateEntry("AutoStart", true, description: "Start the FDO agent automatically once the scene binds");
+        _llmControl = _category.CreateEntry("LlmControl", true, description: "Master switch: LLM is allowed to control fire missions");
+        _priorityQueue = _category.CreateEntry("PriorityQueue", true, description: "Stage LLM missions in an internal priority queue instead of flooding the FCS");
+        _fcsQueueDepth = _category.CreateEntry("FcsQueueDepth", 2, description: "Dispatch from the priority queue only while FCS pending tasks are below this");
+        InitializePricing();
     }
+
+    public static bool LlmControl
+    {
+        get => _llmControl.Value;
+        set { _llmControl.Value = value; MelonPreferences.Save(); }
+    }
+
+    public static bool PriorityQueue
+    {
+        get => _priorityQueue.Value;
+        set { _priorityQueue.Value = value; MelonPreferences.Save(); }
+    }
+
+    public static int FcsQueueDepth => Math.Max(1, _fcsQueueDepth.Value);
+
+    private static MelonPreferences_Entry<double> _priceInMiss = null!;
+    private static MelonPreferences_Entry<double> _priceInHit = null!;
+    private static MelonPreferences_Entry<double> _priceOut = null!;
+    private static MelonPreferences_Entry<string> _priceCurrency = null!;
+
+    private static void InitializePricing()
+    {
+        _priceInMiss = _category.CreateEntry("PriceInputCacheMissPer1M", 2.0, description: "Input price per 1M tokens (cache miss)");
+        _priceInHit = _category.CreateEntry("PriceInputCacheHitPer1M", 0.2, description: "Input price per 1M tokens (cache hit)");
+        _priceOut = _category.CreateEntry("PriceOutputPer1M", 3.0, description: "Output price per 1M tokens");
+        _priceCurrency = _category.CreateEntry("PriceCurrency", "CNY");
+    }
+
+    public static double PriceInputCacheMiss => _priceInMiss.Value;
+    public static double PriceInputCacheHit => _priceInHit.Value;
+    public static double PriceOutput => _priceOut.Value;
+    public static string PriceCurrency => _priceCurrency.Value;
 
     public static string ApiKey => _apiKey.Value;
     public static string BaseUrl => _baseUrl.Value.TrimEnd('/');

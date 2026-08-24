@@ -89,6 +89,7 @@ public static class LlmClient
             ["max_tokens"] = AgentConfig.MaxTokens,
             ["temperature"] = 0.3,
             ["stream"] = true,
+            ["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true },
         };
         if (toolsJson != null)
         {
@@ -123,7 +124,19 @@ public static class LlmClient
             try
             {
                 using var doc = JsonDocument.Parse(data);
-                var choice = doc.RootElement.GetProperty("choices")[0];
+
+                // Final chunk (empty choices) carries usage when stream_options.include_usage is set.
+                if (doc.RootElement.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
+                {
+                    long U(string name) => usage.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+                    UsageMeter.AddRound(U("prompt_tokens"), U("completion_tokens"),
+                        U("prompt_cache_hit_tokens"), U("prompt_cache_miss_tokens"));
+                }
+
+                if (!doc.RootElement.TryGetProperty("choices", out var choices)
+                    || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
+                    continue;
+                var choice = choices[0];
                 if (!choice.TryGetProperty("delta", out var delta))
                     continue;
 
