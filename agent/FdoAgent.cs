@@ -31,19 +31,17 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
   未揭示目标只能根据电报情报三角定位后用bearingDeg+distanceKm盲射
   (方位角以炮塔为原点, 正北=0°顺时针; 距离单位km)。
-- 坐标换算: 电文中的网格如"H5 0:9"表示 kmX=字母序号+第一个子格/10+0.05 (A=0,B=1,...,
-  H=7, 即kmX≈7.05), kmY=(行号-1)+第二个子格/10+0.05 (即kmY≈4.95)。+0.05是取0.1km子格
-  的中心, 不加会系统性偏向西南。快照中的mapX/mapY换算:
-  kmX=10.016+mapX*3.8164, kmY=5.235+mapY*3.8164。两点间: dx=kmX2-kmX1, dy=kmY2-kmY1,
-  距离=sqrt(dx²+dy²) km, 从点1看点2的方位角=atan2(dx,dy)转成0~360°。
-  炮塔自身位置见快照turretMapX/turretMapY(注意先换算成km坐标再参与计算)。
-  战场报告给出的"自X的方位角"是从X点出发的观测线, 两条线相交即目标位置;
-  "自X距离Y"则是以X为圆心的圆。逐步写出你的计算过程再给出结论。
-- 盲射精度认知: 网格±0.05km、报告方位角±0.5°, 在远距离交汇时误差可达数百米。
-  因此盲射=效力侦察(ranging fire): 第一发的价值是炸开迷雾揭示目标。
+- 定位计算(必须用工具, 严禁手算三角函数——手算漂移是脱靶主因):
+  * grid_to_km: 电文网格(如"G6 5:3")转km坐标并给出炮塔到该点的射击诸元
+  * solve_target: 观测线/距离圆交汇解算。战场报告的"自X的方位角B°"是一条line
+    {from:"X的网格", bearingDeg:B}; "自X距离D"是一个circle {from:..., distanceKm:D};
+    "自X方位角B及距离D"是line带distanceKm(直接定位)。把报告数据原样填进工具,
+    返回值里的bearingDeg/distanceKm直接用于开火action。
+  你只负责从电文中抄录观测数据和选择组合, 数值计算一律交给工具。
+- 盲射精度认知: 情报本身有量化误差(网格±0.05km、方位角±0.5°), 远距离斜交线解算
+  误差被放大。盲射=效力侦察(ranging fire): 第一发的价值是炸开迷雾揭示目标。
   弹着揭示目标(entity_revealed事件)后, 立即用entityId对其精确补射, 那才是摧毁手段。
-  远距离(>8km)斜交线解算尤其不可靠, 若同一目标有"方位角+距离"组合优先用它,
-  且优先选距目标近的观测员的数据。
+  同一目标若有"方位角+距离"组合优先用它, 且优先选距目标近的观测员的数据。
 - 每次决策输出JSON, 两种action格式:
   {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE"},
                {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP"}], "reason": "..."}
@@ -55,8 +53,64 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   已摧毁(isAlive=false)的目标绝不再排。宁可这轮不开火, 也不要堆积队列浪费弹药。
 """;
 
+    private const string ToolsJson = """
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "grid_to_km",
+      "description": "把电文网格坐标(如'G6 5:3')转换为km坐标, 并返回炮塔到该点的方位角与距离",
+      "parameters": {
+        "type": "object",
+        "properties": { "grid": { "type": "string", "description": "网格, 如 'G6 5:3'" } },
+        "required": ["grid"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "solve_target",
+      "description": "由观测线/距离圆精确解算目标位置, 返回km坐标和炮塔射击诸元(bearingDeg/distanceKm)。所有三角定位必须用本工具。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": { "type": "string", "description": "观测点: 网格'G6 5:3'、'turret'或'kmX,kmY'" },
+                "bearingDeg": { "type": "number" },
+                "distanceKm": { "type": "number", "description": "可选; 与bearingDeg同给时直接定位" }
+              },
+              "required": ["from", "bearingDeg"]
+            }
+          },
+          "circles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": { "type": "string" },
+                "distanceKm": { "type": "number" }
+              },
+              "required": ["from", "distanceKm"]
+            }
+          },
+          "near": { "type": "string", "description": "可选; 解有歧义时取靠近此点的解" }
+        }
+      }
+    }
+  }
+]
+""";
+
     private const int PollSliceMs = 5_000;
     private const int RecheckAfterSlices = 5; // 5 x 5s = idle re-evaluation cadence
+    private const double MapLocalToKm = 3.8164;
+    private const double MapOffsetX = 10.016;
+    private const double MapOffsetY = 5.235;
 
     private readonly AgentBridgeMod _mod;
     private readonly object _gate = new();
@@ -177,6 +231,17 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             "\n\n## 你此前的决策(最近10条)\n" + historyBlock +
             "\n\n## 当前战场快照\n" + JsonSerializer.Serialize(snapshot, json);
 
+        var turretKm = (
+            x: MapOffsetX + snapshot.TurretMapX * MapLocalToKm,
+            y: MapOffsetY + snapshot.TurretMapY * MapLocalToKm);
+
+        string ExecuteTool(string name, JsonElement args) => name switch
+        {
+            "grid_to_km" => GridMath.GridToKm(args, turretKm),
+            "solve_target" => GridMath.SolveTarget(args, turretKm),
+            _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
+        };
+
         Status = "thinking...";
         IsStreaming = true;
         StreamingText = "";
@@ -184,7 +249,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         string reply;
         try
         {
-            reply = LlmClient.ChatStream(SystemPrompt, context, chunk =>
+            reply = LlmClient.ChatStream(SystemPrompt, context, ToolsJson, ExecuteTool, chunk =>
             {
                 buffer.Append(chunk);
                 StreamingText = buffer.ToString();
