@@ -301,8 +301,17 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         sb.AppendLine("内部优先队列(staged待下发, 勿重复): " + (staged.Count == 0 ? "(空)" : string.Join(" | ", staged)));
         foreach (var g in s.Guns)
             sb.AppendLine($"火炮{g.Side}: 膛={g.ChamberedShell ?? "空"} 药={g.PowderCharges} canFire={g.CanFire}");
-        sb.AppendLine("征用台可购弹种(本任务唯一可用清单, 清单外弹种购买必败): "
-                      + (s.AvailableShells.Count == 0 ? "(未就绪)" : string.Join(", ", s.AvailableShells)));
+        var shellNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "AP","APHE","ATMC","CLMN","CYAN","DRIL","EQKE","FLCH","HCHE","HE",
+            "INCN","LE","PLCM","PCLM","PHGN","PRPG","SMK","STAR","TEAR","THRM","WP",
+        };
+        var shells = s.AvailableShells.Where(x => shellNames.Contains(x)).ToList();
+        var specials = s.AvailableShells.Where(x => !shellNames.Contains(x)).ToList();
+        sb.AppendLine("征用台可购弹种(开火只能从此选, 清单外弹种购买必败): "
+                      + (shells.Count == 0 ? "(未就绪)" : string.Join(", ", shells)));
+        if (specials.Count > 0)
+            sb.AppendLine("征用台特殊卡(仅经requisition_card工具使用, 不是弹种): " + string.Join(", ", specials));
         sb.AppendLine("可见实体(entityId必须逐字取自此表):");
         if (s.Entities.Count == 0)
             sb.AppendLine("  (无 — 没有任何目标被揭示)");
