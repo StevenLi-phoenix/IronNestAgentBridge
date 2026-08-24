@@ -20,8 +20,12 @@ public class AgentWindow
     public void Draw(FdoAgent agent, AgentBridgeMod mod)
     {
         if (!Visible) return;
-        _rect = GUILayout.Window(WindowId, _rect, (GUI.WindowFunction)(_ => Body(agent, mod)),
-            "IronNest Agent Bridge  [F10]");
+        // This game's interop is missing the GUILayout.Window ctor overload, so draw a
+        // fixed panel with Box + BeginArea instead of a managed window.
+        GUI.Box(_rect, "IronNest Agent Bridge  [F10]");
+        GUILayout.BeginArea(new Rect(_rect.x + 8f, _rect.y + 24f, _rect.width - 16f, _rect.height - 32f));
+        try { Body(agent, mod); }
+        finally { GUILayout.EndArea(); }
     }
 
     private void Body(FdoAgent agent, AgentBridgeMod mod)
@@ -107,7 +111,5 @@ public class AgentWindow
         for (var i = log.Count - 1; i >= 0; i--)
             GUILayout.Label(log[i]);
         GUILayout.EndScrollView();
-
-        GUI.DragWindow();
     }
 }

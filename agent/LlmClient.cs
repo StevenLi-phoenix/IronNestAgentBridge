@@ -14,26 +14,27 @@ public static class LlmClient
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(300) };
 
+    /// <summary>
+    /// Continue a persistent conversation. The caller owns `messages` (system prompt + all
+    /// prior turns + the newest user message); this appends assistant/tool turns in place so
+    /// the whole history stays a byte-stable prefix for the provider's context cache.
+    /// </summary>
     public static string ChatStream(
-        string systemPrompt,
-        string userContent,
+        List<object> messages,
         string? toolsJson,
         Func<string, JsonElement, string>? toolExecutor,
         Action<string> onDelta,
         CancellationToken ct)
     {
-        var messages = new List<object>
-        {
-            new Dictionary<string, object?> { ["role"] = "system", ["content"] = systemPrompt },
-            new Dictionary<string, object?> { ["role"] = "user", ["content"] = userContent },
-        };
-
         for (var round = 0; round < MaxToolRounds; round++)
         {
             var (content, toolCalls) = StreamOneRound(messages, toolsJson, onDelta, ct);
 
             if (toolCalls.Count == 0 || toolExecutor == null)
+            {
+                messages.Add(new Dictionary<string, object?> { ["role"] = "assistant", ["content"] = content });
                 return content;
+            }
 
             messages.Add(new Dictionary<string, object?>
             {

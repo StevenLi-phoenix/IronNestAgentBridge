@@ -116,6 +116,13 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     private const double MapLocalToKm = 3.8164;
     private const double MapOffsetX = 10.016;
     private const double MapOffsetY = 5.235;
+    // Auto-compact the conversation once the cached prefix grows past this many prompt tokens.
+    private const long CompactAtPromptTokens = 100_000;
+
+    // Persistent conversation: system + every turn (incl. tool rounds) stays byte-identical
+    // across decisions so the provider's prefix cache hits on all history.
+    private readonly List<object> _messages = new();
+    private string _carrySummary = "";
 
     private readonly AgentBridgeMod _mod;
     private readonly object _gate = new();
@@ -160,6 +167,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             return;
         }
         _cts = new CancellationTokenSource();
+        _messages.Clear();
+        _messages.Add(new Dictionary<string, object?> { ["role"] = "system", ["content"] = SystemPrompt });
+        _carrySummary = "";
         _thread = new Thread(() => Loop(_cts.Token)) { IsBackground = true, Name = "AgentBridge-FDO" };
         _thread.Start();
         Status = "running";
@@ -233,23 +243,68 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         }
     }
 
+    private string BuildCompactState(StateSnapshotDto s)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("## 战场状态");
+        sb.AppendLine($"炮塔km: ({MapOffsetX + s.TurretMapX * MapLocalToKm:F2}, {MapOffsetY + s.TurretMapY * MapLocalToKm:F2})");
+        sb.AppendLine($"FCS: pending={s.Fcs.PendingCount} done={s.Fcs.CompletedTaskCount} fail={s.Fcs.FailedTaskCount}"
+                      + $" | L: {s.Fcs.LeftTask ?? "-"} | R: {s.Fcs.RightTask ?? "-"}");
+        if (s.Fcs.PendingTasks.Count > 0)
+        {
+            sb.AppendLine("FCS待执行:");
+            foreach (var t in s.Fcs.PendingTasks)
+                sb.AppendLine("  " + t);
+        }
+        var staged = _mod.MissionQueue.Describe();
+        sb.AppendLine("内部优先队列(staged待下发, 勿重复): " + (staged.Count == 0 ? "(空)" : string.Join(" | ", staged)));
+        foreach (var g in s.Guns)
+            sb.AppendLine($"火炮{g.Side}: 膛={g.ChamberedShell ?? "空"} 药={g.PowderCharges} canFire={g.CanFire}");
+        sb.AppendLine("可见实体(entityId必须逐字取自此表):");
+        if (s.Entities.Count == 0)
+            sb.AppendLine("  (无 — 没有任何目标被揭示)");
+        foreach (var e in s.Entities)
+        {
+            sb.Append($"  {e.Id} | {e.Role} | 甲{e.Armour} | {e.Health}/{e.MaxHealth} | {(e.IsAlive ? "alive" : "DEAD")}"
+                      + $" | {e.BearingDeg:F1}° | {e.DistanceKm:F2}km");
+            if (e.ImmuneShells.Length > 0)
+                sb.Append(" | 免疫:" + string.Join(",", e.ImmuneShells));
+            sb.AppendLine();
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Auto-compact: summarize the conversation into a battle brief, then restart the
+    /// message history from it. Costs one summary call; the next round is a cache miss.
+    /// </summary>
+    private void CompactConversation(CancellationToken ct)
+    {
+        AppendLog($"auto-compact: context {UsageMeter.LastPromptTokens:N0} tokens > {CompactAtPromptTokens:N0}", "compact");
+        Status = "compacting...";
+        _messages.Add(new Dictionary<string, object?>
+        {
+            ["role"] = "user",
+            ["content"] = "请把到目前为止的战况压缩成一份接班简报, 只输出简报文本: " +
+                          "1)已确认摧毁的目标 2)已下达但未确认结果的任务 3)存活/待处理目标与其弹种方案 " +
+                          "4)观测员/参考点网格等长期情报 5)已学到的弹药与精度教训 6)统帅部的有效指令与限制",
+        });
+        var summary = LlmClient.ChatStream(_messages, null, null, _ => { }, ct);
+        _messages.Clear();
+        _messages.Add(new Dictionary<string, object?> { ["role"] = "system", ["content"] = SystemPrompt });
+        _carrySummary = summary;
+        TransactionLog.Write("compact", "conversation compacted", new { summary });
+    }
+
     private void Decide(List<BridgeEvent> events, CancellationToken ct)
     {
         var snapshot = MainThread.Run(() => _mod.BuildSnapshot(), 15_000).GetAwaiter().GetResult();
-        snapshot.Markers.Clear(); // bridge-internal mechanics, not intel
 
-        var json = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        string historyBlock;
-        lock (_gate)
-            historyBlock = _history.Count == 0 ? "(无)" : string.Join("\n", _history.TakeLast(10));
-
-        var staged = _mod.MissionQueue.Describe();
         var context =
+            (_carrySummary.Length > 0 ? "## 前情简报(此前对话已压缩)\n" + _carrySummary + "\n\n" : "") +
             "## 新事件\n" + string.Join("\n", events.Select(e => $"[{e.Source}/{e.Type}] {e.Text}")) +
-            "\n\n## 你此前的决策(最近10条)\n" + historyBlock +
-            "\n\n## 内部优先队列(已staged待下发, 勿重复)\n" +
-            (staged.Count == 0 ? "(空)" : string.Join("\n", staged)) +
-            "\n\n## 当前战场快照\n" + JsonSerializer.Serialize(snapshot, json);
+            "\n\n" + BuildCompactState(snapshot);
+        _carrySummary = "";
 
         var turretKm = (
             x: MapOffsetX + snapshot.TurretMapX * MapLocalToKm,
@@ -275,6 +330,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             return result;
         }
 
+        if (UsageMeter.LastPromptTokens > CompactAtPromptTokens && _messages.Count > 3)
+            CompactConversation(ct);
+
+        _messages.Add(new Dictionary<string, object?> { ["role"] = "user", ["content"] = context });
+
         Status = "thinking...";
         IsStreaming = true;
         StreamingText = "";
@@ -282,7 +342,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         string reply;
         try
         {
-            reply = LlmClient.ChatStream(SystemPrompt, context, ToolsJson, ExecuteTool, chunk =>
+            reply = LlmClient.ChatStream(_messages, ToolsJson, ExecuteTool, chunk =>
             {
                 buffer.Append(chunk);
                 StreamingText = buffer.ToString();
