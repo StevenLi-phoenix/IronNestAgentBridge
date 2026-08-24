@@ -49,7 +49,21 @@ dotnet build -c Release
 - `BearingDeg/DistanceKm` 的实体解算是估算（与 FCS 同一比例常数 3.8164）；
   下发火力时优先用 `entityId` 路径，走 FCS 原生解算。
 
-## Agent 接入
+## 内置 Agent（自包含，无需外部环境）
 
-`agent/agent.py` 是最小参考实现：长轮询事件 → 组装战场上下文 → 调 LLM 决策 →
-执行 `/fire`。替换其中的 `call_llm()` 即可接任意第三方模型。
+FDO agent 循环已内置于 mod（`Agent/FdoAgent.cs`），直连任意 OpenAI 兼容接口，
+默认 DeepSeek。游戏内 **F10** 呼出控制面板：启停 agent、查看决策理由与行动日志、
+FCS 队列状态。场景绑定后自动启动（可配）。
+
+配置在 `UserData\MelonPreferences.cfg`：
+
+```toml
+[AgentBridge]
+ApiKey = "sk-..."
+BaseUrl = "https://api.deepseek.com"
+Model = "deepseek-v4-flash"
+MaxTokens = 393216
+AutoStart = true
+```
+
+`agent/agent.py` 保留作为外部参考实现（HTTP API 仍然开放），日常游玩不再需要。

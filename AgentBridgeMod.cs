@@ -1,8 +1,11 @@
 using Il2Cpp;
+using IronNestAgentBridge.Agent;
 using IronNestAgentBridge.Fcs;
 using IronNestAgentBridge.GameState;
 using IronNestAgentBridge.Http;
+using IronNestAgentBridge.Ui;
 using MelonLoader;
+using UnityEngine.InputSystem;
 
 [assembly: MelonInfo(typeof(IronNestAgentBridge.AgentBridgeMod), "IronNest Agent Bridge", "0.1.0", "stevenli")]
 [assembly: MelonGame()]
@@ -19,13 +22,21 @@ public class AgentBridgeMod : MelonMod
     private readonly TeleprinterReader _telegraph = new();
     private readonly FcsGateway _fcs = new();
     private BridgeServer? _server;
+    private FdoAgent? _agent;
+    private readonly AgentWindow _window = new();
 
     private float _nextBindAttempt;
     private float _nextMapPoll;
     private float _nextTelegraphPoll;
+    private float _nextFcsSummary;
+    private bool _autoStartDone;
+
+    public string LastFcsSummary { get; private set; } = "";
 
     public override void OnInitializeMelon()
     {
+        AgentConfig.Initialize();
+        _agent = new FdoAgent(this);
         _server = new BridgeServer(this);
         try
         {
@@ -37,7 +48,17 @@ public class AgentBridgeMod : MelonMod
         }
     }
 
-    public override void OnDeinitializeMelon() => _server?.Stop();
+    public override void OnDeinitializeMelon()
+    {
+        _agent?.Stop();
+        _server?.Stop();
+    }
+
+    public override void OnGUI()
+    {
+        if (_agent != null)
+            _window.Draw(_agent, this);
+    }
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
@@ -71,6 +92,32 @@ public class AgentBridgeMod : MelonMod
             _nextTelegraphPoll = now + TelegraphPollSeconds;
             try { _telegraph.PollAndEmitEvents(); }
             catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] telegraph poll failed: {ex.Message}"); }
+        }
+
+        try
+        {
+            if (Keyboard.current != null && Keyboard.current.f10Key.wasPressedThisFrame)
+                _window.Visible = !_window.Visible;
+        }
+        catch { }
+
+        if (!_autoStartDone && _map.IsBound && AgentConfig.AutoStart && _agent is { IsRunning: false })
+        {
+            _autoStartDone = true;
+            _agent.Start();
+        }
+
+        if (now >= _nextFcsSummary)
+        {
+            _nextFcsSummary = now + 2f;
+            try
+            {
+                var s = _fcs.ReadStatus();
+                LastFcsSummary = $"FCS: pending={s.PendingCount} done={s.CompletedTaskCount} fail={s.FailedTaskCount}" +
+                                 (s.LeftTask != null ? $"\nL: {s.LeftTask}" : "") +
+                                 (s.RightTask != null ? $"\nR: {s.RightTask}" : "");
+            }
+            catch { }
         }
     }
 
