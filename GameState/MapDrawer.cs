@@ -15,7 +15,7 @@ public static class MapDrawer
     public static object Inspect()
     {
         var placers = new List<object>();
-        foreach (var placer in Object.FindObjectsOfType<MapMarkerPlacer>(true))
+        foreach (var placer in UnityEngine.Object.FindObjectsOfType<MapMarkerPlacer>(true))
         {
             var prefabs = new List<string>();
             try
@@ -87,7 +87,7 @@ public static class MapDrawer
     public static string ClearAll()
     {
         var cleared = 0;
-        foreach (var placer in Object.FindObjectsOfType<MapMarkerPlacer>(true))
+        foreach (var placer in UnityEngine.Object.FindObjectsOfType<MapMarkerPlacer>(true))
         {
             try { placer.ClearPlacedMarkers(); cleared++; } catch { }
         }
