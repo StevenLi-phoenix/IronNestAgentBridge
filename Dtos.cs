@@ -63,6 +63,7 @@ public class FcsStatusDto
     public string? RightTask { get; set; }
     public bool AutoFireEnabled { get; set; }
     public bool MaxChargeEnabled { get; set; }
+    public List<string> PendingTasks { get; set; } = new();
     public int CompletedTaskCount { get; set; }
     public int SuccessfulTaskCount { get; set; }
     public int FailedTaskCount { get; set; }

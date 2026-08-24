@@ -46,8 +46,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE"},
                {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP"}], "reason": "..."}
   不开火时输出 {"actions": [], "reason": "..."}
-- 不要重复排已经下达过的任务(见"你此前的决策"), FCS队列里的任务会自动执行完。
-  同一目标一般一发命中即毁; 只有观测到未命中/目标幸存时才补射。
+- 队列纪律(最重要): fcs.pendingTasks列出所有待执行任务(若无此字段则以pendingCount计数),
+  每个任务执行约需1分钟, 队列会自动逐个打完。目标在pendingTasks/你的决策历史里已有
+  未执行完的任务时, 严禁再排——"已下达"不等于"已打完", 你看不到弹着不代表任务丢了。
+  补射的唯一条件: 收到该目标明确的未击穿/未命中报告, 且队列中已无针对它的任务。
+  已摧毁(isAlive=false)的目标绝不再排。宁可这轮不开火, 也不要堆积队列浪费弹药。
 """
 
 

@@ -89,6 +89,14 @@ public class FcsGateway
         dto.FailedTaskCount = Get<int>("FailedTaskCount");
         dto.LeftTask = DescribeTask(Get<object>("LeftTask"));
         dto.RightTask = DescribeTask(Get<object>("RightTask"));
+        try
+        {
+            if (Get<System.Collections.IEnumerable>("QueueCan") is { } queue)
+                foreach (var task in queue)
+                    if (DescribeTask(task) is { } desc)
+                        dto.PendingTasks.Add(desc);
+        }
+        catch { }
         return dto;
     }
 
