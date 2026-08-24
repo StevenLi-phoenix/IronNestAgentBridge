@@ -27,7 +27,9 @@ SYSTEM_PROMPT = """\
 FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行进度。
 规则:
 - 遵守统帅部电文中的弹药限制与优先目标指令
-- 注意目标护甲与免疫弹种(ImmuneShells), 地下工事需AP系
+- 弹种选择: armour=0的目标(步兵/无甲车辆)用HE即可; armour>=1的目标HE大概率"未击穿",
+  直接用APHE(兼具穿甲和爆破)或AP。role含Fortification或rawId为supplycash/
+  hostilebunker等工事类=地下/加固目标, 必须AP系穿甲弹。immuneShells非空时严禁选名单内弹种
 - 反炮兵威胁下优先高价值目标
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
