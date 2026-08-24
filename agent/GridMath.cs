@@ -52,8 +52,20 @@ public static class GridMath
     /// Priority: any line carrying distanceKm is a direct fix; else two lines intersect;
     /// else line x circle; else circle x circle (needs 'near' to disambiguate).
     /// </summary>
-    public static string SolveTarget(JsonElement args, (double x, double y) turretKm)
+    /// <summary>Plotting-work geometry from a solve, for drawing on the map with the player's tools.</summary>
+    public class SolveGeometry
     {
+        public List<((double x, double y) from, (double x, double y) to)> Lines { get; } = new();
+        public List<((double x, double y) center, double radius)> Circles { get; } = new();
+        public (double x, double y)? Solution { get; set; }
+    }
+
+    public static string SolveTarget(JsonElement args, (double x, double y) turretKm)
+        => SolveTarget(args, turretKm, out _);
+
+    public static string SolveTarget(JsonElement args, (double x, double y) turretKm, out SolveGeometry geometry)
+    {
+        geometry = new SolveGeometry();
         var directs = new List<(double x, double y)>();
         var lines = new List<((double x, double y) p, double bearing)>();
         var circles = new List<((double x, double y) c, double r)>();
@@ -68,7 +80,11 @@ public static class GridMath
                     return Error("line missing bearingDeg");
                 var bearing = b.GetDouble();
                 if (line.TryGetProperty("distanceKm", out var d) && d.ValueKind == JsonValueKind.Number)
-                    directs.Add(Offset(p, bearing, d.GetDouble()));
+                {
+                    var fix = Offset(p, bearing, d.GetDouble());
+                    directs.Add(fix);
+                    geometry.Lines.Add((p, fix));
+                }
                 else
                     lines.Add((p, bearing));
             }
@@ -82,6 +98,7 @@ public static class GridMath
                 if (!circle.TryGetProperty("distanceKm", out var d))
                     return Error("circle missing distanceKm");
                 circles.Add((c, d.GetDouble()));
+                geometry.Circles.Add((c, d.GetDouble()));
             }
 
         (double x, double y)? near = null;
@@ -115,6 +132,11 @@ public static class GridMath
         }
         else
             return Error("need at least: 1 line with distanceKm, or 2 lines, or line+circle, or 2 circles");
+
+        // Pure observation lines get drawn from the observer to the solved intersection.
+        foreach (var (p, _) in lines)
+            geometry.Lines.Add((p, target));
+        geometry.Solution = target;
 
         return Result(target, turretKm);
     }

@@ -331,6 +331,27 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         TransactionLog.Write("compact", "conversation compacted", new { summary });
     }
 
+    /// <summary>
+    /// Draw the plotting work on the tactical map with the player's own tools:
+    /// yellow pen for observation lines, compass for range circles, a pen dot
+    /// (zero-length marker) at the solved intersection.
+    /// </summary>
+    private static void PlotGeometry(GridMath.SolveGeometry geometry)
+    {
+        foreach (var (from, to) in geometry.Lines)
+            GameState.MapDrawer.Draw(0, "MapMarkerYellow",
+                new UnityEngine.Vector2((float)from.x, (float)from.y),
+                new UnityEngine.Vector2((float)to.x, (float)to.y));
+        foreach (var (center, radius) in geometry.Circles)
+            GameState.MapDrawer.Draw(0, "MapMarkerDiscCompass",
+                new UnityEngine.Vector2((float)center.x, (float)center.y),
+                new UnityEngine.Vector2((float)(center.x + radius), (float)center.y));
+        if (geometry.Solution is { } s)
+            GameState.MapDrawer.Draw(0, "MapMarkerRED",
+                new UnityEngine.Vector2((float)s.x, (float)s.y),
+                new UnityEngine.Vector2((float)s.x, (float)s.y));
+    }
+
     private string ExecuteRequisition(JsonElement args, StateSnapshotDto snapshot)
     {
         var cardId = args.TryGetProperty("cardId", out var c) ? c.GetString() ?? "" : "";
@@ -359,10 +380,19 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 
         string ExecuteTool(string name, JsonElement args)
         {
+            string SolveAndPlot(JsonElement a)
+            {
+                var json = GridMath.SolveTarget(a, turretKm, out var geometry);
+                if (geometry.Solution != null)
+                    try { MainThread.Run(() => PlotGeometry(geometry), 10_000).GetAwaiter().GetResult(); }
+                    catch { /* plotting is cosmetic */ }
+                return json;
+            }
+
             var result = name switch
             {
                 "grid_to_km" => GridMath.GridToKm(args, turretKm),
-                "solve_target" => GridMath.SolveTarget(args, turretKm),
+                "solve_target" => SolveAndPlot(args),
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
             };
