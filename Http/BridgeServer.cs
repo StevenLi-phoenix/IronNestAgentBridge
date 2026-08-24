@@ -99,6 +99,28 @@ public class BridgeServer
                 TryWrite(ctx, result == "ok" ? 200 : 409, new { result });
                 break;
             }
+            case ("GET", "/markers"):
+            {
+                var info = MainThread.Run(() => GameState.MapDrawer.Inspect()).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, info);
+                break;
+            }
+            case ("POST", "/draw"):
+            {
+                var req = ReadBody<DrawRequest>(ctx);
+                if (req?.PrefabName == null) { TryWrite(ctx, 400, new { error = "need {placerIndex, prefabName, ox, oy, tx, ty}" }); break; }
+                var result = MainThread.Run(() => GameState.MapDrawer.Draw(
+                    req.PlacerIndex, req.PrefabName!,
+                    new UnityEngine.Vector2(req.Ox, req.Oy), new UnityEngine.Vector2(req.Tx, req.Ty))).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, new { result });
+                break;
+            }
+            case ("POST", "/draw/clear"):
+            {
+                var result = MainThread.Run(() => GameState.MapDrawer.ClearAll()).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, new { result });
+                break;
+            }
             case ("POST", "/print"):
             {
                 var req = ReadBody<PrintRequest>(ctx);
@@ -123,6 +145,16 @@ public class BridgeServer
     {
         public string? Which { get; set; }
         public string[]? Lines { get; set; }
+    }
+
+    private class DrawRequest
+    {
+        public int PlacerIndex { get; set; }
+        public string? PrefabName { get; set; }
+        public float Ox { get; set; }
+        public float Oy { get; set; }
+        public float Tx { get; set; }
+        public float Ty { get; set; }
     }
 
     private static T? ReadBody<T>(HttpListenerContext ctx) where T : class
