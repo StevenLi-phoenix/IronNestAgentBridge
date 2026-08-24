@@ -67,7 +67,7 @@ def call_llm(context: str) -> dict:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": context},
             ],
-            "max_tokens": 4096,
+            "max_tokens": 393_216,  # deepseek-v4-flash API ceiling
             "temperature": 0.3,
         },
         timeout=120,
