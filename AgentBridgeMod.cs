@@ -97,34 +97,69 @@ public class AgentBridgeMod : MelonMod
         return snapshot;
     }
 
+    private int _markerCursor;
+
+    /// <summary>
+    /// Round-robin over the map's marker tokens. Every queued mission moves a marker onto
+    /// its aim point — cosmetic feedback so the player sees the agent's intent on the
+    /// command table, exactly like a human dragging a red marker before pressing T.
+    /// </summary>
+    private int NextMarkerId()
+    {
+        var ids = _map.MarkerIds.OrderBy(i => i).ToList();
+        if (ids.Count == 0) return -1;
+        return ids[_markerCursor++ % ids.Count];
+    }
+
     public string QueueFireMission(FireMissionRequest req)
     {
+        if (!_map.IsBound)
+            return "tactical map not bound";
+
+        float mapX, mapY;
+        string label;
+
         if (!string.IsNullOrEmpty(req.EntityId))
         {
-            if (!_map.IsBound)
-                return "tactical map not bound";
             var entity = _map.FindEntity(req.EntityId!);
             if (entity == null)
                 return $"entity '{req.EntityId}' not visible on the command table (fog of war or bad id)";
-            if (!_map.TryMoveMarker(req.MarkerId, entity.MapX, entity.MapY))
-                return $"marker {req.MarkerId} not found on map";
-            var result = _fcs.EnqueueFromMarker(req.MarkerId, req.Shell);
-            if (result == "ok")
-                EventLog.Append("fcs_task_update", "fcs",
-                    $"fire mission queued on {req.EntityId} ({req.Shell}) via marker {req.MarkerId}");
-            return result;
+            mapX = entity.MapX;
+            mapY = entity.MapY;
+            label = req.EntityId!;
         }
-
-        if (req.BearingDeg is float bearing && req.DistanceKm is float distance)
+        else if (req.BearingDeg is float bearing && req.DistanceKm is float distance)
         {
-            var result = _fcs.EnqueueByBearing(bearing, distance, req.Shell, req.MarkerId);
+            var local = _map.SolutionToMapLocal(bearing, distance);
+            mapX = local.x;
+            mapY = local.y;
+            label = $"bearing {bearing:F1}°, {distance:F2} km";
+        }
+        else
+        {
+            return "need either entityId or bearingDeg+distanceKm";
+        }
+
+        var markerId = NextMarkerId();
+        if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))
+        {
+            var result = _fcs.EnqueueFromMarker(markerId, req.Shell);
             if (result == "ok")
                 EventLog.Append("fcs_task_update", "fcs",
-                    $"fire mission queued at bearing {bearing:F1}°, {distance:F2} km ({req.Shell})");
+                    $"fire mission queued on {label} ({req.Shell}) as marker {markerId}");
             return result;
         }
 
-        return "need either entityId or bearingDeg+distanceKm";
+        // No marker available — fall back to direct injection, display-only loss.
+        if (req.BearingDeg is float b2 && req.DistanceKm is float d2)
+        {
+            var result = _fcs.EnqueueByBearing(b2, d2, req.Shell, 0);
+            if (result == "ok")
+                EventLog.Append("fcs_task_update", "fcs",
+                    $"fire mission queued at {label} ({req.Shell}), no marker available");
+            return result;
+        }
+        return "no map marker available for entity targeting";
     }
 
     public bool PrintOnTeleprinter(string which, string[] lines)

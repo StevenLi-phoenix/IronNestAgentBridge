@@ -90,6 +90,17 @@ public class MapReader
         return result;
     }
 
+    public IReadOnlyCollection<int> MarkerIds => _markers.Keys;
+
+    /// <summary>Convert a turret-relative firing solution back to map-local coordinates.</summary>
+    public Vector3 SolutionToMapLocal(float bearingDeg, float distanceKm)
+    {
+        var turretLocal = TurretLocalOnMap();
+        var r = distanceKm / MapLocalToKm;
+        var rad = bearingDeg * Mathf.Deg2Rad;
+        return new Vector3(turretLocal.x + Mathf.Sin(rad) * r, turretLocal.y + Mathf.Cos(rad) * r, 0f);
+    }
+
     /// <summary>Move a marker onto a map-local position (used for entity-targeted fire missions).</summary>
     public bool TryMoveMarker(int id, float mapX, float mapY)
     {
