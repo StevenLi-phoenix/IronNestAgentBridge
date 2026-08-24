@@ -28,7 +28,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   聚集在一片区域时一发多杀(如相邻的装甲目标群/装甲与步兵混编群)——看到实体表中
   多个目标方位角/距离彼此接近时优先考虑一发APHE覆盖, 而不是逐个排单发。
   role含Fortification或rawId为supplycash/hostilebunker等工事类=地下/加固目标,
-  必须AP。immuneShells非空时严禁选名单内弹种
+  必须AP。immuneShells非空时严禁选名单内弹种。
+  **弹种可用性**: 每个任务的征用台只有部分弹种卡, 见战场状态中的"征用台可购弹种"
+  清单——只能从该清单选弹, 清单外的弹种FCS购买必败(fail计数+1白白浪费炮位时间)。
+  首选弹种不可用时按用途降级替代(如APHE缺货→AP)。
 - 反炮兵威胁下优先高价值目标
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
@@ -278,6 +281,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         sb.AppendLine("内部优先队列(staged待下发, 勿重复): " + (staged.Count == 0 ? "(空)" : string.Join(" | ", staged)));
         foreach (var g in s.Guns)
             sb.AppendLine($"火炮{g.Side}: 膛={g.ChamberedShell ?? "空"} 药={g.PowderCharges} canFire={g.CanFire}");
+        sb.AppendLine("征用台可购弹种(本任务唯一可用清单, 清单外弹种购买必败): "
+                      + (s.AvailableShells.Count == 0 ? "(未就绪)" : string.Join(", ", s.AvailableShells)));
         sb.AppendLine("可见实体(entityId必须逐字取自此表):");
         if (s.Entities.Count == 0)
             sb.AppendLine("  (无 — 没有任何目标被揭示)");

@@ -80,6 +80,8 @@ public class StateSnapshotDto
     public List<TeleprinterDto> Teleprinters { get; set; } = new();
     public List<GunDto> Guns { get; set; } = new();
     public FcsStatusDto Fcs { get; set; } = new();
+    // Shell punchcards physically present on the requisition console — the only buyable types this mission.
+    public List<string> AvailableShells { get; set; } = new();
 }
 
 public class BridgeEvent

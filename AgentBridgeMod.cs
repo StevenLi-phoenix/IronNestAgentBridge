@@ -251,6 +251,7 @@ public class AgentBridgeMod : MelonMod
             Teleprinters = _telegraph.ReadAll(),
             Guns = GunStateReader.ReadBoth(),
             Fcs = _fcs.ReadStatus(),
+            AvailableShells = AmmoReader.ReadAvailableShells(),
         };
         if (_map.IsBound)
         {
