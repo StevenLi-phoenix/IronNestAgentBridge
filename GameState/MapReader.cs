@@ -18,6 +18,7 @@ public class MapReader
     private Transform? _mapSurface;
     private Transform? _fireMissionRoot;
     private readonly Dictionary<int, Transform> _markers = new();
+    private readonly Dictionary<int, Vector3> _markerHomes = new();
 
     // Previous snapshot keyed by entity id, for diffing.
     private Dictionary<string, MapEntityDto> _previous = new();
@@ -31,6 +32,7 @@ public class MapReader
         _mapSurface = null;
         _fireMissionRoot = null;
         _markers.Clear();
+        _markerHomes.Clear();
         _previous = new Dictionary<string, MapEntityDto>();
     }
 
@@ -51,7 +53,10 @@ public class MapReader
                 continue;
             var tmp = child.GetComponentInChildren<TextMeshPro>();
             if (tmp != null && int.TryParse(tmp.text, out var id))
+            {
                 _markers[id] = child;
+                _markerHomes[id] = child.localPosition; // parking spot to return to after the shot
+            }
         }
 
         IsBound = true;
@@ -112,6 +117,14 @@ public class MapReader
     }
 
     /// <summary>Visible entities only — fire missions must not target fog-of-war contacts.</summary>
+    public bool ReturnMarkerHome(int id)
+    {
+        if (!_markers.TryGetValue(id, out var tr) || tr == null || !_markerHomes.TryGetValue(id, out var home))
+            return false;
+        tr.localPosition = home;
+        return true;
+    }
+
     public MapEntityDto? FindEntity(string entityId)
         => ReadEntities().FirstOrDefault(e => e.Visible && (e.Id == entityId || e.RawId == entityId));
 

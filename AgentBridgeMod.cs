@@ -140,8 +140,39 @@ public class AgentBridgeMod : MelonMod
                 LastFcsSummary = $"FCS: pending={s.PendingCount} done={s.CompletedTaskCount} fail={s.FailedTaskCount}" +
                                  (s.LeftTask != null ? $"\nL: {s.LeftTask}" : "") +
                                  (s.RightTask != null ? $"\nR: {s.RightTask}" : "");
+                ReturnFinishedMarkers(s);
             }
             catch { }
+        }
+    }
+
+    private readonly HashSet<int> _deployedMarkers = new();
+    private static readonly System.Text.RegularExpressions.Regex TaskIdRe =
+        new(@"^T(\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Park markers back at their home spot once no FCS task references them anymore.</summary>
+    private void ReturnFinishedMarkers(FcsStatusDto status)
+    {
+        if (_deployedMarkers.Count == 0 || !_map.IsBound)
+            return;
+
+        var inUse = new HashSet<int>();
+        void Scan(string? desc)
+        {
+            if (desc == null) return;
+            var m = TaskIdRe.Match(desc);
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var id))
+                inUse.Add(id);
+        }
+        Scan(status.LeftTask);
+        Scan(status.RightTask);
+        foreach (var t in status.PendingTasks)
+            Scan(t);
+
+        foreach (var id in _deployedMarkers.Where(id => !inUse.Contains(id)).ToList())
+        {
+            if (_map.ReturnMarkerHome(id))
+                _deployedMarkers.Remove(id);
         }
     }
 
@@ -165,6 +196,7 @@ public class AgentBridgeMod : MelonMod
         _agent?.Stop();
         _agent?.ClearLog();
         MissionQueue.Clear();
+        _deployedMarkers.Clear();
         _map.Unbind();
         _telegraph.Reset();
         _autoStartDone = false;
@@ -279,8 +311,11 @@ public class AgentBridgeMod : MelonMod
         {
             var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority);
             if (result == "ok")
+            {
+                _deployedMarkers.Add(markerId);
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as marker {markerId}");
+            }
             return result;
         }
 
