@@ -123,7 +123,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     private const double MapOffsetX = 10.016;
     private const double MapOffsetY = 5.235;
     // Auto-compact the conversation once the cached prefix grows past this many prompt tokens.
-    private const long CompactAtPromptTokens = 100_000;
+    // v4-flash has 1M context and near-free cache hits, so compact late to preserve memory.
+    private const long CompactAtPromptTokens = 400_000;
 
     // Persistent conversation: system + every turn (incl. tool rounds) stays byte-identical
     // across decisions so the provider's prefix cache hits on all history.

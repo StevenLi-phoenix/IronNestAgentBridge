@@ -50,10 +50,11 @@ public static class AgentConfig
 
     private static void InitializePricing()
     {
-        _priceInMiss = _category.CreateEntry("PriceInputCacheMissPer1M", 2.0, description: "Input price per 1M tokens (cache miss)");
-        _priceInHit = _category.CreateEntry("PriceInputCacheHitPer1M", 0.2, description: "Input price per 1M tokens (cache hit)");
-        _priceOut = _category.CreateEntry("PriceOutputPer1M", 3.0, description: "Output price per 1M tokens");
-        _priceCurrency = _category.CreateEntry("PriceCurrency", "CNY");
+        // deepseek-v4-flash peak pricing (off-peak is half); edit in MelonPreferences.cfg.
+        _priceInMiss = _category.CreateEntry("PriceInputCacheMissPer1M", 0.44, description: "Input price per 1M tokens (cache miss)");
+        _priceInHit = _category.CreateEntry("PriceInputCacheHitPer1M", 0.014, description: "Input price per 1M tokens (cache hit)");
+        _priceOut = _category.CreateEntry("PriceOutputPer1M", 1.32, description: "Output price per 1M tokens");
+        _priceCurrency = _category.CreateEntry("PriceCurrency", "USD");
     }
 
     public static double PriceInputCacheMiss => _priceInMiss.Value;
