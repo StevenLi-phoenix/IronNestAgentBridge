@@ -100,10 +100,15 @@ public class MapReader
         return true;
     }
 
+    /// <summary>Visible entities only — fire missions must not target fog-of-war contacts.</summary>
     public MapEntityDto? FindEntity(string entityId)
-        => ReadEntities().FirstOrDefault(e => e.Id == entityId || e.RawId == entityId);
+        => ReadEntities().FirstOrDefault(e => e.Visible && (e.Id == entityId || e.RawId == entityId));
 
-    public List<MapEntityDto> ReadEntities()
+    /// <summary>
+    /// includeHidden=true is for internal diffing only. Anything exposed to the LLM
+    /// must use the default: fog-of-war entities would be wallhack intel.
+    /// </summary>
+    public List<MapEntityDto> ReadEntities(bool includeHidden = false)
     {
         var result = new List<MapEntityDto>();
         if (!IsBound || _fireMissionRoot == null || _mapSurface == null)
@@ -140,6 +145,9 @@ public class MapReader
             }
             catch { }
 
+            if (!visible && !includeHidden)
+                continue;
+
             result.Add(new MapEntityDto
             {
                 Id = entity.ID ?? child.name,
@@ -171,7 +179,7 @@ public class MapReader
     public void PollAndEmitEvents()
     {
         if (!IsBound) return;
-        var current = ReadEntities();
+        var current = ReadEntities(includeHidden: true); // full list for transition tracking; events below only fire for visible entities
         var currentById = new Dictionary<string, MapEntityDto>();
 
         foreach (var e in current)
@@ -195,7 +203,7 @@ public class MapReader
                         $"{e.Id} damaged: {e.Health}/{e.MaxHealth}", e);
             }
 
-            if (prev != null && prev.IsAlive && !e.IsAlive)
+            if (prev != null && prev.Visible && prev.IsAlive && !e.IsAlive)
                 EventLog.Append("entity_destroyed", "map", $"{e.Id} destroyed", e);
         }
 

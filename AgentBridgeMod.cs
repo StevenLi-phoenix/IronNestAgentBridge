@@ -105,7 +105,7 @@ public class AgentBridgeMod : MelonMod
                 return "tactical map not bound";
             var entity = _map.FindEntity(req.EntityId!);
             if (entity == null)
-                return $"entity '{req.EntityId}' not found on map";
+                return $"entity '{req.EntityId}' not visible on the command table (fog of war or bad id)";
             if (!_map.TryMoveMarker(req.MarkerId, entity.MapX, entity.MapY))
                 return $"marker {req.MarkerId} not found on map";
             var result = _fcs.EnqueueFromMarker(req.MarkerId, req.Shell);
