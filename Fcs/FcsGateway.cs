@@ -87,17 +87,39 @@ public class FcsGateway
         dto.CompletedTaskCount = Get<int>("CompletedTaskCount");
         dto.SuccessfulTaskCount = Get<int>("SuccessfulTaskCount");
         dto.FailedTaskCount = Get<int>("FailedTaskCount");
-        dto.LeftTask = DescribeTask(Get<object>("LeftTask"));
-        dto.RightTask = DescribeTask(Get<object>("RightTask"));
+        var leftObj = Get<object>("LeftTask");
+        var rightObj = Get<object>("RightTask");
+        dto.LeftTask = DescribeTask(leftObj);
+        dto.RightTask = DescribeTask(rightObj);
+        RecordRef(dto, leftObj);
+        RecordRef(dto, rightObj);
         try
         {
             if (Get<System.Collections.IEnumerable>("QueueCan") is { } queue)
                 foreach (var task in queue)
+                {
                     if (DescribeTask(task) is { } desc)
                         dto.PendingTasks.Add(desc);
+                    RecordRef(dto, task);
+                }
         }
         catch { }
         return dto;
+    }
+
+    /// <summary>Structured serial→marker-id map so the bridge never regex-parses display strings.</summary>
+    private static void RecordRef(FcsStatusDto dto, object? task)
+    {
+        if (task == null) return;
+        try
+        {
+            var t = task.GetType();
+            var serial = t.GetField("serial", AnyInstance)?.GetValue(task) as int?;
+            var markerId = t.GetField("targetId", AnyInstance)?.GetValue(task) as int?;
+            if (serial is > 0 && markerId.HasValue)
+                dto.SerialToMarker[serial.Value] = markerId.Value;
+        }
+        catch { }
     }
 
     private static string? DescribeTask(object? task)
@@ -110,7 +132,11 @@ public class FcsGateway
             var motion = "";
             try { motion = t.GetMethod("MotionSuffix", AnyInstance)?.Invoke(task, new object[] { true }) as string ?? ""; }
             catch { }
-            return $"T{F("targetId")} {F("bulletType")} brg {F("angel"):F1} dist {F("distance"):F2}km " +
+            // Unique serial (#N) is the task handle; the recycled marker id stays internal.
+            // Stock FCS (no serial field) falls back to the old T-number lead.
+            var serial = F("serial") as int?;
+            var head = serial is > 0 ? $"#{serial}" : $"T{F("targetId")}";
+            return $"{head} {F("bulletType")} brg {F("angel"):F1} dist {F("distance"):F2}km " +
                    $"chg {F("chargeCount")} [{F("progress")}]{motion}" +
                    (Equals(F("failureReason"), "") ? "" : $" fail: {F("failureReason")}");
         }
@@ -173,7 +199,7 @@ public class FcsGateway
     /// Non-blocking: FCS never waits for adjustments; its staged re-solve pipeline picks the
     /// new point up. Returns the FCS result string, or a diagnostic when unavailable.
     /// </summary>
-    public string AdjustTaskAim(int targetId, float localX, float localY)
+    public string AdjustTaskAim(int serial, float localX, float localY)
     {
         var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
         if (fsc == null)
@@ -183,44 +209,57 @@ public class FcsGateway
         var method = fsc.GetType().GetMethod("AdjustTaskAim", AnyInstance);
         if (method == null)
             return "FCS build lacks AdjustTaskAim";
-        return method.Invoke(fsc, new object[] { targetId, localX, localY }) as string ?? "adjust failed";
+        return method.Invoke(fsc, new object[] { serial, localX, localY }) as string ?? "adjust failed";
     }
 
-    /// <summary>Shell type of a queued/executing task by T-number ("HE"/"AP"/…), null if not found.</summary>
-    public string? TryGetTaskShell(int targetId)
+    /// <summary>
+    /// Shell type + internal marker id of a queued/executing task by unique serial (#N).
+    /// Returns false when no live task carries that serial.
+    /// </summary>
+    public bool TryGetTaskInfo(int serial, out string? shell, out int markerId)
     {
+        shell = null;
+        markerId = -1;
         var fsc = ResolveFsc(out _, out _);
-        if (fsc == null) return null;
+        if (fsc == null) return false;
         var t = fsc.GetType();
-        string? ShellOf(object? task)
+        (string? shell, int markerId)? InfoOf(object? task)
         {
             if (task == null) return null;
             var tt = task.GetType();
             try
             {
-                if (!Equals(tt.GetField("targetId", AnyInstance)?.GetValue(task), targetId))
+                if (tt.GetField("serial", AnyInstance)?.GetValue(task) is not int s || s != serial)
                     return null;
-                return tt.GetField("bulletType", AnyInstance)?.GetValue(task)?.ToString();
+                return (tt.GetField("bulletType", AnyInstance)?.GetValue(task)?.ToString(),
+                        tt.GetField("targetId", AnyInstance)?.GetValue(task) as int? ?? -1);
             }
             catch { return null; }
         }
         try
         {
-            if (ShellOf(t.GetProperty("LeftTask", AnyInstance)?.GetValue(fsc)) is { } left)
-                return left;
-            if (ShellOf(t.GetProperty("RightTask", AnyInstance)?.GetValue(fsc)) is { } right)
-                return right;
-            if (t.GetProperty("QueueCan", AnyInstance)?.GetValue(fsc) is System.Collections.IEnumerable queue)
+            var hit = InfoOf(t.GetProperty("LeftTask", AnyInstance)?.GetValue(fsc))
+                      ?? InfoOf(t.GetProperty("RightTask", AnyInstance)?.GetValue(fsc));
+            if (hit == null && t.GetProperty("QueueCan", AnyInstance)?.GetValue(fsc) is System.Collections.IEnumerable queue)
                 foreach (var task in queue)
-                    if (ShellOf(task) is { } shell)
-                        return shell;
+                    if (InfoOf(task) is { } q)
+                    {
+                        hit = q;
+                        break;
+                    }
+            if (hit is { } info)
+            {
+                shell = info.shell;
+                markerId = info.markerId;
+                return true;
+            }
         }
         catch { }
-        return null;
+        return false;
     }
 
-    /// <summary>Cancel a pending (not yet executing) FCS task by its T-number. Patched FCS only.</summary>
-    public string CancelPending(int targetId)
+    /// <summary>Cancel a pending (not yet executing) FCS task by unique serial (#N). Patched FCS only.</summary>
+    public string CancelPending(int serial)
     {
         var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
         if (fsc == null)
@@ -228,8 +267,8 @@ public class FcsGateway
         var method = fsc.GetType().GetMethod("CancelPendingTask", AnyInstance);
         if (method == null)
             return "FCS build lacks CancelPendingTask";
-        var cancelled = method.Invoke(fsc, new object[] { targetId }) as string;
-        return cancelled == null ? $"no pending task with T{targetId}" : $"cancelled: {cancelled}";
+        var cancelled = method.Invoke(fsc, new object[] { serial }) as string;
+        return cancelled == null ? $"no pending task with #{serial}" : $"cancelled: {cancelled}";
     }
 
     private static void TrySetPriority(object task, int priority)

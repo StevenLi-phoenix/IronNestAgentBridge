@@ -151,7 +151,7 @@ public class BridgeServer
             {
                 var req = ReadBody<AdjustFireRequest>(ctx);
                 if (req == null)
-                { TryWrite(ctx, 400, new { error = "need {targetId, target|entityId, offsetKmX?, offsetKmY?}" }); break; }
+                { TryWrite(ctx, 400, new { error = "need {serial, target|entityId, offsetKmX?, offsetKmY?}" }); break; }
                 var result = MainThread.Run(() => _mod.AdjustFireMission(req)).GetAwaiter().GetResult();
                 TryWrite(ctx, 200, new { result });
                 break;

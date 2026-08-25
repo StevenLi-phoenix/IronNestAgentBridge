@@ -111,8 +111,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 开火: 用 **fire 工具**, 每个目标一次调用, 一轮内可连续多次。目标三选一:
   entityId(逐字来自entities[]) / target(坐标点名, 盲射首选) / bearingDeg+distanceKm。
   坐标(target)优于bearing/distance: 诸元入队时按炮塔棋子实时位置推导, 校准后自动正确。
+- 任务编号体系: 每个FCS任务有**唯一编号#N**(从#1递增, 永不复用), adjust_fire/
+  cancel_pending_task只认它。T1/T2不是任务编号, 是**炮位标签**: T1=左炮、T2=右炮
+  当前正在执行的任务(其自身的#N在任务行里)。
 - 改瞄已排任务: 新情报显示某排队/准备中任务的瞄点错了(目标实际在别处、新弹着提示、
-  友军进入弹着区)时, 优先用 **adjust_fire**(targetId=T编号)直接改瞄, 而不是cancel+重排——
+  友军进入弹着区)时, 优先用 **adjust_fire**(serial=#编号)直接改瞄, 而不是cancel+重排——
   保留已装填进度, 更快。FCS不等你: 不改就按原瞄点发, 改了在下一次重解算时上炮,
   出膛前任意时刻有效(越晚越可能来不及, 已在待发+自动开火时可能赶不上)。
   会清除该任务的运动模型(改为静态点); 超出已装装药射程会被拒, 那时才cancel重排。
@@ -122,9 +125,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   普通目标=50; 低价值步兵/补刀=30。FCS的matcher按优先级分配炮位, 把发现的目标都排上、
   优先级排对即可; 高优任务随时插队。已入队任务不会因目标死亡自动取消,
   排队前确认isAlive, 死目标的排队任务用cancel_pending_task清掉。
-- 队列纪律(最重要): **队列状态的唯一权威是当前快照的 fcs.pendingTasks + L/R 炮位任务**,
+- 队列纪律(最重要): **队列状态的唯一权威是当前快照的 fcs.pendingTasks + T1/T2 炮位任务**,
   实时反映事实。你的对话历史只说明"下达过", 不说明"还在队列":
-  * 目标出现在 pendingTasks 或 L/R 上 → 在途, 严禁重复排。
+  * 目标出现在 pendingTasks 或 T1/T2 上 → 在途, 严禁重复排。
   * 历史称已排、但 pendingTasks 和炮位上都没有 → 先查快照的**在途炮弹**清单:
     在清单上 = 弹已出膛正在飞(shell_fired事件), 目标已被服务, **严禁重复排队**,
     等弹着(shell_impact)再评估。也不在在途清单 → 该任务已落地或被F9/取消清除,
@@ -192,18 +195,18 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "adjust_fire",
-      "description": "最后时刻修正一个已排队/炮上准备中任务的瞄准点(按T编号, 见'FCS待执行'和左右炮位任务)。FCS**不会等待**你的修正: 不调用则按原瞄准点正常发射; 调用后新瞄点在FCS下一次重解算(装填后预瞄准/开火前校正/人工待发跟瞄)时上炮。比cancel+重排快且保留已装填进度。注意: 会把该任务改为静态瞄点(清除其运动模型/实体跟踪); 新距离超出已装装药射程会被拒绝(此时cancel_pending_task重排); 弹已出膛则无效。",
+      "description": "最后时刻修正一个已排队/炮上准备中任务的瞄准点(按#唯一编号, 见'FCS待执行'清单和T1/T2炮位任务行)。FCS**不会等待**你的修正: 不调用则按原瞄准点正常发射; 调用后新瞄点在FCS下一次重解算(装填后预瞄准/开火前校正/人工待发跟瞄)时上炮。比cancel+重排快且保留已装填进度。注意: 会把该任务改为静态瞄点(清除其运动模型/实体跟踪); 新距离超出已装装药射程会被拒绝(此时cancel_pending_task重排); 弹已出膛则无效。",
       "parameters": {
         "type": "object",
         "properties": {
-          "targetId": { "type": "number", "description": "任务的T编号" },
+          "serial": { "type": "number", "description": "任务唯一编号#N(不带#号的数字)" },
           "target": { "type": "string", "description": "新瞄准点: 网格'K4 5:0'或'kmX,kmY'" },
           "entityId": { "type": "string", "description": "或: 改瞄entities[]中的实体当前位置" },
           "offsetKmX": { "type": "number", "description": "弹着点微偏移km(东正西负, |≤0.5|), 语义同fire" },
           "offsetKmY": { "type": "number", "description": "弹着点微偏移km(北正南负, |≤0.5|)" },
           "allowDangerouslyFriendlyFire": { "type": "boolean", "description": "新弹着点友军在爆炸半径内时会拒绝; 确认接受误伤才置true" }
         },
-        "required": ["targetId"]
+        "required": ["serial"]
       }
     }
   },
@@ -241,11 +244,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "cancel_pending_task",
-      "description": "取消FCS等待队列中的一个任务(按T编号, 见'FCS待执行'清单; 每次取消队列中第一个匹配项)。已在左右炮上执行中的任务无法取消(高优先级任务的抢占机制会处理)。用于: 目标已被摧毁但任务还在排队、弹种排错、或需要给队列腾位。",
+      "description": "取消FCS等待队列中的一个任务(按#唯一编号, 见'FCS待执行'清单)。已在T1/T2炮位上执行中的任务无法取消(高优先级任务的抢占机制会处理)。用于: 目标已被摧毁但任务还在排队、弹种排错、或需要给队列腾位。",
       "parameters": {
         "type": "object",
-        "properties": { "targetId": { "type": "number", "description": "任务的T编号" } },
-        "required": ["targetId"]
+        "properties": { "serial": { "type": "number", "description": "任务唯一编号#N(不带#号的数字)" } },
+        "required": ["serial"]
       }
     }
   },
@@ -505,10 +508,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
               + "合法校准依据=统帅部电文中的铁巢网格, 或战场/侦查报告中可解算出炮位的观测数据(用solve_target反定位); "
               + "**两者都没有就保持未校准并等待, 绝不猜测/编造坐标**");
         sb.AppendLine($"FCS: pending={s.Fcs.PendingCount} done={s.Fcs.CompletedTaskCount} fail={s.Fcs.FailedTaskCount}"
-                      + $" | L: {s.Fcs.LeftTask ?? "-"} | R: {s.Fcs.RightTask ?? "-"}");
+                      + $" | T1(左炮): {s.Fcs.LeftTask ?? "-"} | T2(右炮): {s.Fcs.RightTask ?? "-"}");
         if (s.Fcs.PendingTasks.Count > 0)
         {
-            sb.AppendLine("FCS待执行:");
+            sb.AppendLine("FCS待执行(#N=任务唯一编号, adjust/cancel用它):");
             foreach (var t in s.Fcs.PendingTasks)
                 sb.AppendLine("  " + t);
         }
@@ -668,21 +671,25 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 
     private string ExecuteCancelPending(JsonElement args)
     {
-        if (!args.TryGetProperty("targetId", out var t) || t.ValueKind != JsonValueKind.Number)
-            return JsonSerializer.Serialize(new { error = "targetId required" });
-        var id = t.GetInt32();
-        var result = MainThread.Run(() => _mod.CancelPendingFcsTask(id), 15_000).GetAwaiter().GetResult();
-        AppendLog($"cancel T{id} -> {result}", "cancel", new { targetId = id, result });
+        // "targetId" accepted as a legacy alias so an occasional LLM slip still lands.
+        if (!args.TryGetProperty("serial", out var t) || t.ValueKind != JsonValueKind.Number)
+            if (!args.TryGetProperty("targetId", out t) || t.ValueKind != JsonValueKind.Number)
+                return JsonSerializer.Serialize(new { error = "serial required (任务唯一编号#N)" });
+        var serial = t.GetInt32();
+        var result = MainThread.Run(() => _mod.CancelPendingFcsTask(serial), 15_000).GetAwaiter().GetResult();
+        AppendLog($"cancel #{serial} -> {result}", "cancel", new { serial, result });
         return JsonSerializer.Serialize(new { result });
     }
 
     private string ExecuteAdjustFire(JsonElement args)
     {
-        if (!args.TryGetProperty("targetId", out var t) || t.ValueKind != JsonValueKind.Number)
-            return JsonSerializer.Serialize(new { error = "targetId required" });
+        // "targetId" accepted as a legacy alias so an occasional LLM slip still lands.
+        if (!args.TryGetProperty("serial", out var t) || t.ValueKind != JsonValueKind.Number)
+            if (!args.TryGetProperty("targetId", out t) || t.ValueKind != JsonValueKind.Number)
+                return JsonSerializer.Serialize(new { error = "serial required (任务唯一编号#N)" });
         var req = new AdjustFireRequest
         {
-            TargetId = t.GetInt32(),
+            Serial = t.GetInt32(),
             EntityId = args.TryGetProperty("entityId", out var id) ? id.GetString() : null,
             TargetPoint = args.TryGetProperty("target", out var tp) ? tp.GetString() : null,
             OffsetKmX = args.TryGetProperty("offsetKmX", out var ox) && ox.ValueKind == JsonValueKind.Number ? ox.GetSingle() : null,
@@ -690,7 +697,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             AllowDangerouslyFriendlyFire = args.TryGetProperty("allowDangerouslyFriendlyFire", out var cff) && cff.ValueKind == JsonValueKind.True,
         };
         var result = MainThread.Run(() => _mod.AdjustFireMission(req), 15_000).GetAwaiter().GetResult();
-        AppendLog($"adjust T{req.TargetId} -> {result}", "adjust", new { req, result });
+        AppendLog($"adjust #{req.Serial} -> {result}", "adjust", new { req, result });
         return JsonSerializer.Serialize(new { result });
     }
 

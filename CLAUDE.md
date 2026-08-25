@@ -2,13 +2,20 @@
 
 ## 当前状态（2026-08-25 会话交接）
 
-- **双端均已部署最新**（桥 Mods\ 2:21 版含 adjust_fire；FCS Logic UserData\ 热部署含 AdjustTaskAim）。
+- **双端均已部署最新**（桥直接构建进 Mods\；FCS Logic UserData\ 热部署）。
 - 最新增量（两端）：**adjust_fire 最后时刻改瞄**——LLM 主动修正已排队/炮上准备中任务的
-  瞄准点（按 T 编号），FCS **不等待**（不改就按原瞄点发）：ArtilleryTask.aimAdjusted 标记把
+  瞄准点，FCS **不等待**（不改就按原瞄点发）：ArtilleryTask.aimAdjusted 标记把
   三段重解门（pre-aim/pre-fire/manual-wait）扩到静态任务，pre-fire 对改瞄任务用 0.03km 细阈值
   而非 50m 显著性门；FSC.AdjustTaskAim 清运动模型改静态点、炮上任务校验已装装药射程
-  （超出拒绝→cancel 重排）；桥侧 AdjustFireMission 复用友军普查（SurveyBlast 抽出共用，
-  弹种从 FCS 队列反查）+ 挪物理标记 + 更新弹着匹配点；工具 adjust_fire + `POST /adjust`。
+  （超出拒绝→cancel 重排）；桥侧 AdjustFireMission 复用友军普查（SurveyBlast 抽出共用）
+  + 挪物理标记 + 更新弹着匹配点；工具 adjust_fire + `POST /adjust`。
+- **任务编号体系重构**：T 编号（=标记号，回收复用必重复）从一切对外显示/寻址中删除。
+  每任务获唯一流水号 **#N**（ArtilleryTask.serial，入队时 TaskDispatcher 分配、抢占重排保留、
+  F9 归零），adjust/cancel（FSC.AdjustTaskAim / CancelPendingTask）只认 #N。**T1/T2 是固定
+  炮位标签**（T1=左炮、T2=右炮当前任务），出现在 FCS HUD、桥面板与快照。标记回收/任务标注
+  改用 FcsStatusDto.SerialToMarker 结构化映射（gateway 反射读 serial+targetId），不再正则
+  解析显示串；FirePlan.Label、FirePriorityStatusText、队列行均显示 #N；stock FCS（无 serial
+  字段）时 DescribeTask 回退旧 T 前缀。
 - 本轮新增（桥）：任务生命周期自动化（结束自动停 agent / 新任务 FullReset 清历史，
   MissionManager.CurrentPhase 轮询）；`counter_battery` 倒计时事件（20s 一报）；
   24h 世界时钟时间轴（所有事件/快照/工具回执带 [@HH:mm]）；事件防抖 1s + 去重；
