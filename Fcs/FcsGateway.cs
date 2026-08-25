@@ -136,6 +136,27 @@ public class FcsGateway
         return shared.GetType().GetProperty("Requisition", AnyInstance)?.GetValue(shared);
     }
 
+    /// <summary>
+    /// Submit a punchcard purchase DTO to FCS's console coordinator (patched FCS).
+    /// Returns null when the FCS build lacks the API — caller falls back to the legacy
+    /// bridge-side physical routine.
+    /// </summary>
+    public string? RequestCardPurchase(string cardId, float? bearingDeg)
+    {
+        var fsc = ResolveFsc(out _, out _);
+        var method = fsc?.GetType().GetMethod("RequestConsoleCard", AnyInstance);
+        if (fsc == null || method == null)
+            return null;
+        return method.Invoke(fsc, new object[] { cardId, bearingDeg ?? 0f, bearingDeg.HasValue }) as string;
+    }
+
+    /// <summary>Latest completed console card-request outcome (patched FCS), for polling.</summary>
+    public string? ReadConsoleCardResult()
+    {
+        var fsc = ResolveFsc(out _, out _);
+        return fsc?.GetType().GetProperty("ConsoleCardRequestResult", AnyInstance)?.GetValue(fsc) as string;
+    }
+
     /// <summary>Cancel a pending (not yet executing) FCS task by its T-number. Patched FCS only.</summary>
     public string CancelPending(int targetId)
     {

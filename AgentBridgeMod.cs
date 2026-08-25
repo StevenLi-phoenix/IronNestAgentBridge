@@ -188,6 +188,14 @@ public class AgentBridgeMod : MelonMod
                                  (s.LeftTask != null ? $"\nL: {s.LeftTask}" : "") +
                                  (s.RightTask != null ? $"\nR: {s.RightTask}" : "");
                 ReturnFinishedMarkers(s);
+
+                var cardResult = _fcs.ReadConsoleCardResult();
+                if (!string.IsNullOrEmpty(cardResult) && cardResult != _lastCardResult)
+                {
+                    _lastCardResult = cardResult!;
+                    EventLog.Append("requisition", "fcs", $"card request completed: {cardResult}");
+                    Agent.TransactionLog.Write("requisition", cardResult!);
+                }
             }
             catch { }
         }
@@ -340,6 +348,20 @@ public class AgentBridgeMod : MelonMod
         if (ids.Count == 0) return -1;
         return ids[_markerCursor++ % ids.Count];
     }
+
+    /// <summary>Card purchase: DTO into FCS's coordinator when available, legacy physical path otherwise.</summary>
+    public string RequestCard(string cardId, float? bearingDeg)
+    {
+        var viaFcs = _fcs.RequestCardPurchase(cardId, bearingDeg);
+        if (viaFcs != null)
+        {
+            EventLog.Append("requisition", "fcs", $"card '{cardId}' {viaFcs}");
+            return viaFcs + " (result arrives via events)";
+        }
+        return GameState.RequisitionOperator.StartPurchase(cardId, bearingDeg, null);
+    }
+
+    private string _lastCardResult = "";
 
     public string CancelPendingFcsTask(int targetId)
     {

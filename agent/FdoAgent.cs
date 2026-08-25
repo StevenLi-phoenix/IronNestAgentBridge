@@ -444,9 +444,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         if (cardId.Length == 0)
             return JsonSerializer.Serialize(new { error = "cardId required" });
         float? bearing = args.TryGetProperty("bearingDeg", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetSingle() : null;
-        // The console is arbitrated by FCS's shared CoroutineLock; our purchase queues behind
-        // any in-flight FCS auto-buy, so no idle gate is needed. Distance is not player-selectable.
-        var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId, bearing, null), 15_000)
+        // Preferred path: a DTO into FCS's own console coordinator (serialized with its
+        // auto-buys). Legacy bridge-side physical routine only for stock FCS.
+        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });
     }
