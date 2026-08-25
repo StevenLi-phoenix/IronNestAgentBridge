@@ -136,6 +136,19 @@ public class FcsGateway
         return shared.GetType().GetProperty("Requisition", AnyInstance)?.GetValue(shared);
     }
 
+    /// <summary>Cancel a pending (not yet executing) FCS task by its T-number. Patched FCS only.</summary>
+    public string CancelPending(int targetId)
+    {
+        var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
+        if (fsc == null)
+            return !modPresent ? "FCS mod not present" : !logicLoaded ? "FCS logic not loaded" : "FCS unavailable";
+        var method = fsc.GetType().GetMethod("CancelPendingTask", AnyInstance);
+        if (method == null)
+            return "FCS build lacks CancelPendingTask";
+        var cancelled = method.Invoke(fsc, new object[] { targetId }) as string;
+        return cancelled == null ? $"no pending task with T{targetId}" : $"cancelled: {cancelled}";
+    }
+
     private static void TrySetPriority(object task, int priority)
     {
         // Field exists only on our patched FCS build; stock FCS just ignores priority.

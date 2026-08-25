@@ -341,6 +341,13 @@ public class AgentBridgeMod : MelonMod
         return ids[_markerCursor++ % ids.Count];
     }
 
+    public string CancelPendingFcsTask(int targetId)
+    {
+        var result = _fcs.CancelPending(targetId);
+        EventLog.Append("fcs_task_update", "fcs", $"cancel T{targetId}: {result}");
+        return result;
+    }
+
     public string SetDeclaredTurret(float kmX, float kmY)
     {
         var result = _map.SetDeclaredTurret(kmX, kmY);

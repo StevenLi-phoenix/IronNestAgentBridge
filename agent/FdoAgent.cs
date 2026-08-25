@@ -102,6 +102,18 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {
     "type": "function",
     "function": {
+      "name": "cancel_pending_task",
+      "description": "取消FCS等待队列中的一个任务(按T编号, 见'FCS待执行'清单; 每次取消队列中第一个匹配项)。已在左右炮上执行中的任务无法取消(高优先级任务的抢占机制会处理)。用于: 目标已被摧毁但任务还在排队、弹种排错、或需要给队列腾位。",
+      "parameters": {
+        "type": "object",
+        "properties": { "targetId": { "type": "number", "description": "任务的T编号" } },
+        "required": ["targetId"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "requisition_card",
       "description": "在征用台上插入指定打孔卡、设置卡片旋钮、按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(如ScoutPlane)给bearingDeg指定侦查方向, 飞机沿该方向揭开侦查条带; 距离/起始位置游戏不可选, 无此参数。特殊卡价格见清单, 侦察机很贵, 只在情报价值明确时使用。",
       "parameters": {
@@ -406,6 +418,16 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 new UnityEngine.Vector2((float)s.x, (float)s.y));
     }
 
+    private string ExecuteCancelPending(JsonElement args)
+    {
+        if (!args.TryGetProperty("targetId", out var t) || t.ValueKind != JsonValueKind.Number)
+            return JsonSerializer.Serialize(new { error = "targetId required" });
+        var id = t.GetInt32();
+        var result = MainThread.Run(() => _mod.CancelPendingFcsTask(id), 15_000).GetAwaiter().GetResult();
+        AppendLog($"cancel T{id} -> {result}", "cancel", new { targetId = id, result });
+        return JsonSerializer.Serialize(new { result });
+    }
+
     private string ExecuteSetTurret(JsonElement args, (double x, double y) turretKm)
     {
         var pos = args.TryGetProperty("position", out var p) ? p.GetString() ?? "" : "";
@@ -459,6 +481,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "solve_target" => SolveAndPlot(args),
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 "set_turret_position" => ExecuteSetTurret(args, turretKm),
+                "cancel_pending_task" => ExecuteCancelPending(args),
                 // Some models hallucinate the decision JSON as a tool call — steer them back.
                 _ when name == "function_calls" || args.TryGetProperty("actions", out _)
                     => JsonSerializer.Serialize(new { error = "这不是工具。{\"actions\":[...],\"reason\":\"...\"} 决策JSON必须作为普通文本回复直接输出, 不要通过工具调用发送。请重新以文本输出你的决策。" }),
