@@ -36,6 +36,11 @@
 - 坐标系："Draggable Surface" local × **3.8164** = km；km 帧原点偏移 (10.016, 5.235)。
   网格 "H5 0:9"：kmX=字母序号+子格/10+0.05（格心），kmY=(行-1)+子格/10+0.05。
 - 玩家标记 = "Draggable Surface" 下 "MapToken_Artillery"（TMP 文本=编号）。
+- **炮塔三兄弟辨析**（同名陷阱）: `GameObject.Find("TurretLocation")` 抓到的是真锚点(权威物理位置,
+  永不该动); `Canvas/MapRoot/TurretLocation`(带 TurretLocationIcon)是静态图标;
+  **可拖动的棋子是 `Draggable Surface/Player Turret Piece`**——它是"指挥部认为炮塔在哪"的
+  推断真源, FCS 与桥都以它的 localPosition 为射击原点(摆错→打偏, by design)。
+  LLM 用 set_turret_position 挪它; 玩家手拖同样生效。
 
 **FCS 对接（反射链，F9 后必须重解析）**
 - `FcsHostMod`(melon "IronNestFCS Smart") → `_reloader`(私有) → `Current`(公有) → `_fcs`(私有) → `FSC`。
