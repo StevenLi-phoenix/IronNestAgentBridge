@@ -513,9 +513,10 @@ public class AgentBridgeMod : MelonMod
     }
 
     /// <summary>Card purchase: DTO into FCS's coordinator when available, legacy physical path otherwise.</summary>
-    public string RequestCard(string cardId, float? bearingDeg, int priority = 50, string? startGrid = null)
+    public string RequestCard(string cardId, float? bearingDeg, int priority = 50, string? startGrid = null,
+        float? distanceKm = null)
     {
-        var viaFcs = _fcs.RequestCardPurchase(cardId, bearingDeg, priority, startGrid);
+        var viaFcs = _fcs.RequestCardPurchase(cardId, bearingDeg, priority, startGrid, distanceKm);
         if (viaFcs != null)
         {
             EventLog.Append("requisition", "fcs", $"card '{cardId}' {viaFcs}");

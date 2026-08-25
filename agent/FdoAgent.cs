@@ -64,8 +64,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   * 被跟踪目标进雾后模型继续外推(约90s后标记不可靠); 不要为同一移动目标叠加多发,
     等弹着评估。
 - 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
-  两条出路: 摧毁敌炮兵(fire priority>=90)或紧急转移卡**MoveZone**(requisition_card
-  priority=100, 约65点); 转移完成后炮位已变, 必须重新校准(买LocationReport)。
+  出路: 摧毁敌炮兵(fire priority>=90), 或转移——**MoveDirection定向移动**(约10点,
+  令铁巢向指定方向移动设定距离, 优先选它: 便宜且新炮位可推算=旧炮位+方向×距离,
+  转移完成后直接set_assumed_turret_position到推算点, 不用买LocationReport)或
+  **MoveZone紧急转移**(约65点, 无输入)。MoveZone落点不可预知, 转移后必须重新校准
+  (买LocationReport)。
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
   未揭示目标只能根据电报情报三角定位后用bearingDeg+distanceKm盲射
@@ -91,10 +94,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   每次发射同样暴露炮位/推进敌方测定——盲射(含STAR)依然允许, 但要有意识地权衡:
   征用侦察卡(侦察机/前线观察员)是不暴露炮位的侦察手段; 开火则倾向攒好情报后集中速打,
   少用零敲碎打。
-- 前线观察员(Spotter卡, 若本局可购, 极便宜约1点): 在startGrid部署一名持续观察哨,
-  观察报告经电文回传——比一次性的侦察机适合**长期盯住一片区域**(如目标频繁移动、或
-  需要弹着观测修正), 且几乎免费, 可购时优先于昂贵的侦察机考虑。部署位置选在能俯瞰
-  目标区的近侧网格; 回报中的方位/距离观测抄给solve_target定位。回报格式以实际电文为准。
+- 前线观测员(Spotter卡, 若本局可购, 约1点): 卡面"前线观测员(FO)提供**最近处敌军**的
+  情报"——几乎免费的情报来源, 地图空白/统帅部说有敌但没显示时**先买它**再考虑昂贵的
+  侦察机或消耗炮弹。**必须给startGrid部署网格**——把FO部署到怀疑敌军所在区域附近,
+  它报告离部署点最近的敌军。回报经电文回传, 其中的方位/距离观测抄给solve_target定位;
+  回报格式以实际电文为准。
 - 盲射精度认知: 情报本身有量化误差(网格±0.05km、方位角±0.5°), 远距离斜交线解算
   误差被放大。盲射=效力侦察(ranging fire): 第一发的价值是炸开迷雾揭示目标。
   弹着揭示目标(entity_revealed事件)后, 立即用entityId对其精确补射, 那才是摧毁手段。
@@ -112,7 +116,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   的钱赌一发不准的弹。只有对已揭示目标(entityId)才用杀伤弹。**杀伤弹之间按性价比选**:
   对照规格表算"每点覆盖面积/伤害"——如HCHE爆炸半径(550m)约为HE(250m)的2.2倍、覆盖面积
   近5倍, 单价通常不到2倍: 目标群、合并打击、需要容错半径的场合**优先HCHE而不是连发HE**;
-  单个小目标才用HE省钱。例外: 统帅部明确限制弹种时从其指令。
+  单个小目标才用HE省钱。**LE弹**(约8点, 中等装药小威力, 爆半径150m): 定位精确的单个小目标
+  比HE再省2点, 但容错半径小, 只在瞄点可信时用。**DRIL训练弹**(约3点, 混凝土填充无爆炸物,
+  有效半径极小): 唯一用途是**校射**——试射看弹着修正提示而不想浪费杀伤弹、或弹着点贴近
+  友军不敢用实弹时用它; 无杀伤不揭雾, 绝不能当杀伤弹或侦察弹排。
+  例外: 统帅部明确限制弹种时从其指令。
 - 开火: 用 **fire 工具**, 每个目标一次调用, 一轮内可连续多次。目标三选一:
   entityId(逐字来自entities[]) / target(坐标点名, 盲射首选) / bearingDeg+distanceKm。
   坐标(target)优于bearing/distance: 诸元入队时按炮塔棋子实时位置推导, 校准后自动正确。
@@ -261,13 +269,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。常用卡: ScoutPlane(侦察机, 贵, 配bearingDeg+startGrid); LocationReport(位置报告, 便宜, **必须给startGrid设置网格输入**(如'A1'), 经电文回报本炮位坐标, 校准依据); MoveZone(紧急转移, 贵, 无需任何输入, 反炮兵逃生); Spotter(前线观察员, 极便宜约1点, 部署一名持续观察哨——给startGrid部署网格, 观察报告经电文回传, 不暴露炮位; 回报格式以实际电文为准, 其中的方位/距离观测喂solve_target定位目标)。卡ID以清单为准, 买错名字时回执会列出全部可购ID。priority: 普通卡50; MoveZone等紧急卡=100立即插队。",
+      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。常用卡: ScoutPlane(侦察机, 贵, 配bearingDeg+startGrid); LocationReport(位置报告, 便宜, **必须给startGrid设置网格输入**(如'A1'), 经电文回报本炮位坐标, 校准依据); MoveZone(紧急转移, 贵, 无需任何输入, 反炮兵逃生); Spotter(前线观测员FO, 约1点, **必须给startGrid部署网格**(如'A1'), 提供最近处敌军的情报, 经电文回传, 不暴露炮位); MoveDirection(定向移动, 约10点, **必须给bearingDeg+distanceKm**: 令铁巢向指定方向移动设定距离, 新炮位可推算=旧炮位+方向×距离, 转移后按推算点重新校准)。卡ID以清单为准, 买错名字时回执会列出全部可购ID。priority: 普通卡50; MoveZone/MoveDirection等紧急逃生用途=100立即插队。",
       "parameters": {
         "type": "object",
         "properties": {
           "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" },
           "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查飞行方向方位角(北=0顺时针)" },
-          "startGrid": { "type": "string", "description": "侦察类卡: 起飞网格单元(如'P4')——飞机从此格沿bearingDeg方向飞行揭雾, 航程最长约12格, 与bearing一起规划航线, 尽量让航程留在图内(图外航段侦察不到东西)" },
+          "startGrid": { "type": "string", "description": "网格单元输入(如'P4'): ScoutPlane=起飞格(沿bearingDeg飞行揭雾, 航程约12格, 尽量让航程留在图内); Spotter=观测员部署格; LocationReport=设置格" },
+          "distanceKm": { "type": "number", "description": "距离拨盘输入km: MoveDirection卡必须(与bearingDeg一起=移动方向+距离)" },
           "priority": { "type": "number", "description": "0-100, 默认50; 紧急转移类=100" }
         },
         "required": ["cardId"]
@@ -727,9 +736,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         var cardPriority = args.TryGetProperty("priority", out var pr) && pr.ValueKind == JsonValueKind.Number
             ? Math.Clamp(pr.GetInt32(), 0, 100) : 50;
         var startGrid = args.TryGetProperty("startGrid", out var sg) ? sg.GetString() : null;
+        float? distanceKm = args.TryGetProperty("distanceKm", out var dk) && dk.ValueKind == JsonValueKind.Number ? dk.GetSingle() : null;
         // Preferred path: a DTO into FCS's own console coordinator (serialized with its
         // auto-buys). Legacy bridge-side physical routine only for stock FCS.
-        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing, cardPriority, startGrid), 15_000)
+        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing, cardPriority, startGrid, distanceKm), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });
     }
