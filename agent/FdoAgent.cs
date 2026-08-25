@@ -79,6 +79,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   * solve_target: 观测线/距离圆交汇解算, 返回目标位置(kmX,kmY)。战场报告的
     "自X的方位角B°"是一条line {from:"X的网格", bearingDeg:B}; "自X距离D"是一个
     circle {from:..., distanceKm:D}; "自X方位角B及距离D"是line带distanceKm(直接定位)。
+  * distance_between: 任意两点/实体间距离与方位; entities_near: 某点半径内实体清单——
+    判断两目标能否合并打击(间距 vs 弹药爆炸半径)、选簇心、排查弹着点周边友军, 用这两个,
+    严禁目测坐标差手算。
   * 开火: 位置类目标用action的target字段("kmX,kmY"或网格)直接点名——诸元由系统
     在入队时按棋子实时位置推导。firing_solution仅用于人工核对诸元, 不是开火必经步骤。
   你只负责从电文中抄录观测数据和选择组合, 数值计算一律交给工具。
@@ -243,6 +246,36 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "target": { "type": "string", "description": "目标: 网格'G6 5:3'或'kmX,kmY'" },
           "entityId": { "type": "string", "description": "或: entities[]中的实体id" }
         }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "distance_between",
+      "description": "计算两个目标/坐标点之间的直线距离与方位(a→b)。a/b各自三选一: entityId(逐字来自entities[]) / 坐标点(网格'K4 5:0'或'kmX,kmY') / 'turret'(炮塔棋子当前假定位置)。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "a": { "type": "string", "description": "端点A: entityId / 网格 / 'kmX,kmY' / 'turret'" },
+          "b": { "type": "string", "description": "端点B: 同上" }
+        },
+        "required": ["a", "b"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "entities_near",
+      "description": "列出某坐标点半径内的所有已揭示实体(敌我/存活/距离/方位, 按距离排序)。用途: 合并打击前确认簇内目标数与簇心、弹着点周边友军排查、判断某弹药爆炸半径能覆盖谁。center写法同distance_between的端点。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "center": { "type": "string", "description": "圆心: entityId / 网格 / 'kmX,kmY' / 'turret'" },
+          "radiusKm": { "type": "number", "description": "半径km, 默认1.0" }
+        },
+        "required": ["center"]
       }
     }
   },
@@ -663,6 +696,91 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         });
     }
 
+    /// <summary>
+    /// Resolve one endpoint spec to km: a visible entity id, the literal 'turret', or a
+    /// grid/km point. Pure snapshot math — no game thread involved.
+    /// </summary>
+    private static ((double x, double y) km, string label)? ResolvePoint(
+        string? spec, StateSnapshotDto s, (double x, double y) turretKm)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return null;
+        if (spec!.Equals("turret", StringComparison.OrdinalIgnoreCase))
+            return (turretKm, "turret");
+        var entity = s.Entities.FirstOrDefault(e => e.Id == spec || e.RawId == spec);
+        if (entity != null)
+            return ((MapOffsetX + entity.MapX * MapLocalToKm, MapOffsetY + entity.MapY * MapLocalToKm), entity.Id);
+        if (GridMath.ParsePoint(spec, turretKm) is { } p)
+            return (p, spec);
+        return null;
+    }
+
+    private static (double distanceKm, double bearingDeg) Solution((double x, double y) from, (double x, double y) to)
+    {
+        var dx = to.x - from.x;
+        var dy = to.y - from.y;
+        var bearing = Math.Atan2(dx, dy) * 180.0 / Math.PI;
+        if (bearing < 0) bearing += 360;
+        return (Math.Sqrt(dx * dx + dy * dy), bearing);
+    }
+
+    private string ExecuteDistanceBetween(JsonElement args, StateSnapshotDto s, (double x, double y) turretKm)
+    {
+        var aSpec = args.TryGetProperty("a", out var av) ? av.GetString() : null;
+        var bSpec = args.TryGetProperty("b", out var bv) ? bv.GetString() : null;
+        if (ResolvePoint(aSpec, s, turretKm) is not { } a)
+            return JsonSerializer.Serialize(new { error = $"cannot resolve a='{aSpec}' (not a visible entityId, 'turret', grid, or 'kmX,kmY')" });
+        if (ResolvePoint(bSpec, s, turretKm) is not { } b)
+            return JsonSerializer.Serialize(new { error = $"cannot resolve b='{bSpec}' (not a visible entityId, 'turret', grid, or 'kmX,kmY')" });
+
+        var (dist, bearing) = Solution(a.km, b.km);
+        return JsonSerializer.Serialize(new
+        {
+            a = new { label = a.label, kmX = Math.Round(a.km.x, 3), kmY = Math.Round(a.km.y, 3) },
+            b = new { label = b.label, kmX = Math.Round(b.km.x, 3), kmY = Math.Round(b.km.y, 3) },
+            distanceKm = Math.Round(dist, 3),
+            bearingDegAtoB = Math.Round(bearing, 1),
+        });
+    }
+
+    private string ExecuteEntitiesNear(JsonElement args, StateSnapshotDto s, (double x, double y) turretKm)
+    {
+        var centerSpec = args.TryGetProperty("center", out var cv) ? cv.GetString() : null;
+        if (ResolvePoint(centerSpec, s, turretKm) is not { } center)
+            return JsonSerializer.Serialize(new { error = $"cannot resolve center='{centerSpec}' (not a visible entityId, 'turret', grid, or 'kmX,kmY')" });
+        var radius = args.TryGetProperty("radiusKm", out var rv) && rv.ValueKind == JsonValueKind.Number
+            ? Math.Clamp(rv.GetDouble(), 0.05, 30.0)
+            : 1.0;
+
+        var hits = s.Entities
+            .Select(e =>
+            {
+                var km = (x: MapOffsetX + e.MapX * MapLocalToKm, y: MapOffsetY + e.MapY * MapLocalToKm);
+                var (dist, bearing) = Solution(center.km, km);
+                return (e, dist, bearing);
+            })
+            .Where(t => t.dist <= radius && t.e.Id != center.label)
+            .OrderBy(t => t.dist)
+            .Take(30)
+            .Select(t => new
+            {
+                id = t.e.Id,
+                role = t.e.Role,
+                isAlive = t.e.IsAlive,
+                distanceKm = Math.Round(t.dist, 3),
+                bearingDeg = Math.Round(t.bearing, 1),
+            })
+            .ToList();
+
+        return JsonSerializer.Serialize(new
+        {
+            center = new { label = center.label, kmX = Math.Round(center.km.x, 3), kmY = Math.Round(center.km.y, 3) },
+            radiusKm = radius,
+            count = hits.Count,
+            entities = hits,
+        });
+    }
+
     private string ExecuteGetTurret()
     {
         var local = MainThread.Run(() => _mod.ReadTurretLocal(), 10_000).GetAwaiter().GetResult();
@@ -783,6 +901,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     result = MainThread.Run(() => _mod.PullSignalHorn(), 10_000).GetAwaiter().GetResult(),
                 }),
                 "get_assumed_turret_position" or "get_turret_position" => ExecuteGetTurret(),
+                "distance_between" => ExecuteDistanceBetween(args, snapshot, turretKm),
+                "entities_near" => ExecuteEntitiesNear(args, snapshot, turretKm),
                 "firing_solution" => ExecuteFiringSolution(args),
                 "fire" => ExecuteFire(args),
                 // Legacy hallucination shape {"actions":[...]} — execute each as a fire call.
