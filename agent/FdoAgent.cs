@@ -527,8 +527,27 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         var end = reply.LastIndexOf('}');
         if (start < 0 || end <= start)
         {
-            AppendLog("LLM reply had no JSON, skipped");
-            return;
+            // Force closure instead of silently skipping — otherwise a JSON-less round
+            // repeats forever on the recheck cadence and the agent looks stuck.
+            AppendLog("LLM reply had no JSON — demanding a decision");
+            _messages.Add(new Dictionary<string, object?>
+            {
+                ["role"] = "user",
+                ["content"] = "你的上一条回复没有以决策JSON结束。现在立即只输出决策JSON: " +
+                              "{\"actions\":[...],\"reason\":\"...\"}。解算失败的目标就不打(actions留空或只排能打的), 不要再调用工具。",
+            });
+            reply = LlmClient.ChatStream(_messages, null, null, chunk =>
+            {
+                buffer.Append(chunk);
+                StreamingText = buffer.ToString();
+            }, ct);
+            start = reply.IndexOf('{');
+            end = reply.LastIndexOf('}');
+            if (start < 0 || end <= start)
+            {
+                AppendLog("still no JSON after retry; holding this round");
+                return;
+            }
         }
 
         using var doc = JsonDocument.Parse(reply[start..(end + 1)]);
