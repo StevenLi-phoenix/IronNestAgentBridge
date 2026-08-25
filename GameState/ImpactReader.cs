@@ -116,22 +116,14 @@ public class ImpactReader
             }
             catch { continue; }
 
-            var errorDeg = 0f;
-            try
-            {
-                var tier = ImpactCorrectionTierController.Instance?.ActiveDirectionTier;
-                if (tier != null) errorDeg = tier.errorAngleDegrees;
-            }
-            catch { }
-
+            // Relay only what the player sees: the arrow's rough bearing and the in-game
+            // range text verbatim. How imprecise either one is stays undisclosed — the
+            // player doesn't know the tier's error parameters, so neither does the agent.
             string range = "";
             try { range = hint.rangeText?.text ?? ""; } catch { }
-
-            var direction = errorDeg > 0.5f
-                ? $"方位 {displayedBearing:F0}°±{errorDeg:F0}° 扇形内(角度是范围, 非精确值)"
-                : $"方位约 {displayedBearing:F0}°";
-            var distance = string.IsNullOrWhiteSpace(range) ? "" : $", 距离提示\"{range.Trim()}\"(不精确, 仅量级参考)";
-            EventLog.Append("impact_hint", "map", $"弹着修正提示(黄箭头): 脱靶弹着 {at} → 附近目标在{direction}{distance}");
+            var distance = string.IsNullOrWhiteSpace(range) ? "" : $", 距离提示\"{range.Trim()}\"";
+            EventLog.Append("impact_hint", "map",
+                $"弹着修正提示(黄箭头): 脱靶弹着 {at} → 附近目标在方位约 {displayedBearing:F0}° 方向{distance}");
         }
     }
 }
