@@ -92,7 +92,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "set_turret_position",
-      "description": "把指挥桌上的炮塔棋子移动到指定位置。FCS与所有解算以棋子位置为射击原点。校准依据**只能是统帅部电文/情报中的铁巢网格**(开局的'铁巢 - [GRID]'或阵地转移宣告的新网格)。电文尚未送达或未给出铁巢网格时**禁止调用本工具**——保持未校准等待, 绝不猜测坐标。",
+      "description": "把指挥桌上的炮塔棋子移动到指定位置。FCS与所有解算以棋子位置为射击原点。合法校准依据: (1)统帅部电文中的铁巢网格('铁巢 - [GRID]'或阵地转移宣告的新网格); (2)战场/侦查报告中可反解算出炮位的观测数据(先用solve_target解出炮位坐标)。两者都没有时**禁止调用本工具**——保持未校准等待, 绝不猜测坐标。",
       "parameters": {
         "type": "object",
         "properties": { "position": { "type": "string", "description": "网格如'H2 3:4'或km坐标'7.35,1.45'" } },
@@ -387,7 +387,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         sb.AppendLine(s.TurretCalibrated
             ? "炮塔棋子: 已校准(如需查询用get_turret_position)"
             : "炮塔棋子: ⚠本局尚未校准! 出生默认位置不可信, 校准前实体方位/距离均不可信。"
-              + "唯一合法校准依据=统帅部电文中的铁巢网格; **电文未到或未给网格就保持未校准并等待, 绝不猜测/编造坐标**");
+              + "合法校准依据=统帅部电文中的铁巢网格, 或战场/侦查报告中可解算出炮位的观测数据(用solve_target反定位); "
+              + "**两者都没有就保持未校准并等待, 绝不猜测/编造坐标**");
         sb.AppendLine($"FCS: pending={s.Fcs.PendingCount} done={s.Fcs.CompletedTaskCount} fail={s.Fcs.FailedTaskCount}"
                       + $" | L: {s.Fcs.LeftTask ?? "-"} | R: {s.Fcs.RightTask ?? "-"}");
         if (s.Fcs.PendingTasks.Count > 0)
