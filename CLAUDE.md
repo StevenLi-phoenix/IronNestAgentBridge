@@ -182,7 +182,8 @@
 - 队列纪律：唯一权威=快照 pendingTasks+L/R+**在途炮弹清单**（三态查完才许重排）；
   上炮执行约 1min，排队可等 15min+。
 - DeepSeek：`deepseek-v4-flash`，max_tokens 上限 393216；峰谷按北京时间 00:30–08:30 半价；
-  持久多轮对话保前缀缓存（命中 90%+），100k prompt tokens 触发 auto-compact 接班简报。
+  持久多轮对话保前缀缓存（命中 90%+），400k prompt tokens 触发 auto-compact 接班简报
+  （DeepSeek 官方现为 1M 上下文 / 384k max output；MaxTokens 默认 393216 即顶格）。
 - Transaction log：`UserData\IronNestAgentBridge\transactions-*.jsonl`（决策/工具/用量/征用）。
 
 ## HTTP 调试端点（127.0.0.1:17171）
