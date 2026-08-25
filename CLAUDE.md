@@ -158,6 +158,9 @@
 - 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
   → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
   购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
+  **下单预算门**（仅桥侧，FCS 不管账）：QueueFireMission 拒绝 弹价+队列在排任务占款>余额
+  （在排=serial 在 PendingTasks 里的 _deployedTasks，炮位上的视为已扣款）；RequestCard 拒绝
+  卡价>余额。cost 读不到（0）时放行——宁可漏拦不可误拦。
 - **陷阱：`ShellDefinition.ImpactRadius` 单位是 km**（HE=0.25、HCHE=0.55、AP=0.15）。
   曾按米处理导致快照显示"爆半径0m"、友军拦截/覆盖名单形同虚设。
 
