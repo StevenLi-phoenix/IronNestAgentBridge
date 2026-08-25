@@ -27,8 +27,11 @@ public class FdoAgent
 FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行进度。
 规则:
 - **开局工作流第一步 = 校准炮塔位置**: 收到统帅部电文的铁巢网格(或可反定位的报告数据)后
-  立即set_assumed_turret_position; 依据未到则等待。校准之前不做任何解算、不开火——
-  原点错误会让一切诸元作废。阵地转移后同理, 必须先重新校准。
+  立即set_assumed_turret_position; 依据未到、且征用台有**LocationReport(位置报告, 约3点)**卡时,
+  直接requisition_card购买它主动索取本炮位坐标(需给startGrid设网格输入如"A1", 结果经
+  电文回报: 绝对网格直接校准, 相对输入点的方位/距离则solve_target反解)——比干等高效。
+  两者都没有才等待。校准之前不做任何解算、不开火——原点错误会让一切诸元作废。
+  阵地转移(MoveZone)完成后炮位已变, 必须重新校准: 优先再买一张LocationReport。
 - 遵守统帅部电文中的弹药限制与优先目标指令
 - 发信号: 电文/任务指令明确要求"发出信号/拉响号角"时, 用signal_horn工具物理拉响掩体
   号角(通常用于确认收到指令或通知友军行动, 触发任务阶段推进)。没有要求时不要乱拉。
@@ -60,8 +63,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   * 被跟踪目标进雾后模型继续外推(约90s后标记不可靠); 不要为同一移动目标叠加多发,
     等弹着评估。
 - 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
-  两条出路: 摧毁敌炮兵(fire priority>=90)或"紧急转移"类卡(requisition_card priority=100);
-  转移完成后炮位已变, 必须依据新电文重新校准。
+  两条出路: 摧毁敌炮兵(fire priority>=90)或紧急转移卡**MoveZone**(requisition_card
+  priority=100, 约65点); 转移完成后炮位已变, 必须重新校准(买LocationReport)。
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
   未揭示目标只能根据电报情报三角定位后用bearingDeg+distanceKm盲射
@@ -142,7 +145,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "set_assumed_turret_position",
-      "description": "把指挥桌上的炮塔棋子移动到指定位置。FCS与所有解算以棋子位置为射击原点。合法校准依据: (1)统帅部电文中的铁巢网格('铁巢 - [GRID]'或阵地转移宣告的新网格); (2)战场/侦查报告中可反解算出炮位的观测数据(先用solve_target解出炮位坐标)。两者都没有时**禁止调用本工具**——保持未校准等待, 绝不猜测坐标。",
+      "description": "把指挥桌上的炮塔棋子移动到指定位置。FCS与所有解算以棋子位置为射击原点。合法校准依据: (1)统帅部电文中的铁巢网格('铁巢 - [GRID]'或阵地转移宣告的新网格); (2)战场/侦查报告中可反解算出炮位的观测数据(先用solve_target解出炮位坐标); (3)LocationReport卡购买后电文回报的坐标。都没有时**禁止调用本工具**——保持未校准, 绝不猜测坐标。",
       "parameters": {
         "type": "object",
         "properties": { "position": { "type": "string", "description": "网格如'H2 3:4'或km坐标'7.35,1.45'" } },
@@ -222,7 +225,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(如ScoutPlane)给bearingDeg指定侦查方向。特殊卡价格见清单, 侦察机很贵, 只在情报价值明确时使用。priority: 普通卡50; 紧急类卡(如'紧急转移'EmergencyRelocation)=100立即插队优先执行。",
+      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。常用卡: ScoutPlane(侦察机, 贵, 配bearingDeg+startGrid); LocationReport(位置报告, 便宜, **必须给startGrid设置网格输入**(如'A1'), 经电文回报本炮位坐标, 校准依据); MoveZone(紧急转移, 贵, 无需任何输入, 反炮兵逃生)。价格以清单为准。priority: 普通卡50; MoveZone等紧急卡=100立即插队。",
       "parameters": {
         "type": "object",
         "properties": {
