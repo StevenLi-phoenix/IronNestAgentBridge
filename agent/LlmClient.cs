@@ -50,6 +50,8 @@ public static class LlmClient
 
             foreach (var tc in toolCalls)
             {
+                // A reset/stop between rounds must not execute stale-worldview tools.
+                ct.ThrowIfCancellationRequested();
                 string result;
                 try
                 {

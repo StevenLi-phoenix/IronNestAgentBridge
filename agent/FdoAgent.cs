@@ -52,19 +52,15 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 弹药成本(征用点): STAR=2, HE/AP=18。因此侦察性盲射一律用STAR——它的任务是照亮/
   揭示区域, 不是摧毁; 用AP/HE盲射等于花9倍的钱赌一发不准的弹。只有对已揭示目标
   (entityId)才花HE/AP做摧毁性射击。例外: 统帅部明确限制弹种时从其指令。
-- 每次决策输出JSON, 三种action格式, 每个action可带priority(0-100, 默认50):
-  {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE", "priority": 50},
-               {"target": "K4 5:0", "shell": "AP"},         ← 坐标点名(网格或"kmX,kmY"), 盲射首选
-               {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP", "priority": 30}],
-   "reason": "..."}
-  坐标(target)优于bearing/distance: 诸元在入队时按炮塔棋子实时位置推导, 棋子校准后自动正确。
-  不开火时输出 {"actions": [], "reason": "..."}。
-  **注意: 决策JSON是普通文本回复的一部分, 绝不要把它作为工具调用(function call)发送。**
-- priority规则: 反炮兵/敌方炮兵威胁=90以上(FCS会跳过凑单等待立即抢占下一门空炮);
-  统帅部点名的优先目标=70; 常规高价值(仓库/工事/指挥所)=60; 普通目标=50;
-  低价值步兵/补刀=30。priority直接写入FCS任务队列, FCS的matcher按优先级分配炮位,
-  所以把发现的目标都排上、优先级排对即可; 高优任务随时插队, 无需担心排队顺序。
-  注意: 已入FCS队列的任务不会因目标死亡自动取消, 排队前确认目标isAlive。
+- 开火: 用 **fire 工具**, 每个目标一次调用, 一轮内可连续多次。目标三选一:
+  entityId(逐字来自entities[]) / target(坐标点名, 盲射首选) / bearingDeg+distanceKm。
+  坐标(target)优于bearing/distance: 诸元入队时按炮塔棋子实时位置推导, 校准后自动正确。
+- 每轮最后用**普通文本**简述决策理由(1-3句): 打了什么/为什么/在等什么。不需要输出任何JSON。
+- priority规则(fire工具的priority参数): 反炮兵/敌方炮兵威胁=90以上(FCS跳过凑单等待
+  立即抢占下一门空炮); 统帅部点名的优先目标=70; 常规高价值(仓库/工事/指挥所)=60;
+  普通目标=50; 低价值步兵/补刀=30。FCS的matcher按优先级分配炮位, 把发现的目标都排上、
+  优先级排对即可; 高优任务随时插队。已入队任务不会因目标死亡自动取消,
+  排队前确认isAlive, 死目标的排队任务用cancel_pending_task清掉。
 - 队列纪律(最重要): **队列状态的唯一权威是当前快照的 fcs.pendingTasks + L/R 炮位任务**,
   实时反映事实。你的对话历史只说明"下达过", 不说明"还在队列":
   * 目标出现在 pendingTasks 或 L/R 上 → 在途, 严禁重复排。
@@ -101,6 +97,25 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         "type": "object",
         "properties": { "position": { "type": "string", "description": "网格如'H2 3:4'或km坐标'7.35,1.45'" } },
         "required": ["position"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fire",
+      "description": "排一个火力任务(FCS自动完成购弹/装填/瞄准)。目标三选一: entityId(必须逐字来自entities[]); target(坐标点名, 网格'K4 5:0'或'kmX,kmY', 盲射首选, 诸元入队时按棋子实时位置推导); bearingDeg+distanceKm(显式诸元)。立即返回排队结果。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string" },
+          "target": { "type": "string" },
+          "bearingDeg": { "type": "number" },
+          "distanceKm": { "type": "number" },
+          "shell": { "type": "string", "description": "弹种, 从征用台清单选" },
+          "priority": { "type": "number", "description": "0-100, 默认50; 反炮兵>=90" }
+        },
+        "required": ["shell"]
       }
     }
   },
@@ -579,9 +594,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "cancel_pending_task" => ExecuteCancelPending(args),
                 "get_turret_position" => ExecuteGetTurret(),
                 "firing_solution" => ExecuteFiringSolution(args),
-                // Some models hallucinate the decision JSON as a tool call — steer them back.
-                _ when name == "function_calls" || args.TryGetProperty("actions", out _)
-                    => JsonSerializer.Serialize(new { error = "这不是工具。{\"actions\":[...],\"reason\":\"...\"} 决策JSON必须作为普通文本回复直接输出, 不要通过工具调用发送。请重新以文本输出你的决策。" }),
+                "fire" => ExecuteFire(args),
+                // Legacy hallucination shape {"actions":[...]} — execute each as a fire call.
+                _ when args.TryGetProperty("actions", out var acts) && acts.ValueKind == JsonValueKind.Array
+                    => ExecuteFireBatch(acts),
                 _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
             };
             var argsText = args.GetRawText();
@@ -604,6 +620,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         Status = "thinking...";
         IsStreaming = true;
         StreamingText = "";
+        _firesThisRound = 0;
         var buffer = new System.Text.StringBuilder();
         string reply;
         try
@@ -620,77 +637,58 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         }
         Status = "running";
 
-        var start = reply.IndexOf('{');
-        var end = reply.LastIndexOf('}');
-        if (start < 0 || end <= start)
-        {
-            // Force closure instead of silently skipping — otherwise a JSON-less round
-            // repeats forever on the recheck cadence and the agent looks stuck.
-            AppendLog("LLM reply had no JSON — demanding a decision");
-            _messages.Add(new Dictionary<string, object?>
-            {
-                ["role"] = "user",
-                ["content"] = "你的上一条回复没有以决策JSON结束。现在立即只输出决策JSON: " +
-                              "{\"actions\":[...],\"reason\":\"...\"}。解算失败的目标就不打(actions留空或只排能打的), 不要再调用工具。",
-            });
-            reply = LlmClient.ChatStream(_messages, null, null, chunk =>
-            {
-                buffer.Append(chunk);
-                StreamingText = buffer.ToString();
-            }, ct);
-            start = reply.IndexOf('{');
-            end = reply.LastIndexOf('}');
-            if (start < 0 || end <= start)
-            {
-                AppendLog("still no JSON after retry; holding this round");
-                return;
-            }
-        }
-
-        using var doc = JsonDocument.Parse(reply[start..(end + 1)]);
-        var reason = doc.RootElement.TryGetProperty("reason", out var r) ? r.GetString() ?? "" : "";
+        // Fire happens through the fire tool during the round; the final text IS the reason.
+        var reason = reply.Trim();
+        if (reason.Length > 500)
+            reason = reason[..500] + "…";
         LastReason = reason;
         AppendLog($"决策: {reason}", "decision",
-            new { events = events.Select(e => $"{e.Source}/{e.Type}").ToList(), reply });
+            new { events = events.Select(e => $"{e.Source}/{e.Type}").ToList(), fires = _firesThisRound });
 
+        if (_firesThisRound == 0)
+        {
+            var brief = reason.Length > 120 ? reason[..120] + "…" : reason;
+            lock (_gate) _history.Add($"[{DateTime.Now:HH:mm:ss}] 无行动: {brief}");
+        }
+    }
+
+    private int _firesThisRound;
+
+    /// <summary>The fire tool: one mission per call, executed immediately during the round.</summary>
+    private string ExecuteFire(JsonElement action)
+    {
+        var req = new FireMissionRequest
+        {
+            EntityId = action.TryGetProperty("entityId", out var id) ? id.GetString() : null,
+            TargetPoint = action.TryGetProperty("target", out var tp) ? tp.GetString() : null,
+            BearingDeg = action.TryGetProperty("bearingDeg", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetSingle() : null,
+            DistanceKm = action.TryGetProperty("distanceKm", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetSingle() : null,
+            Shell = action.TryGetProperty("shell", out var s) ? s.GetString() ?? "HE" : "HE",
+            Priority = action.TryGetProperty("priority", out var p) && p.ValueKind == JsonValueKind.Number ? Math.Clamp(p.GetInt32(), 0, 100) : 50,
+        };
+        var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
         var stamp = DateTime.Now.ToString("HH:mm:ss");
-        if (!doc.RootElement.TryGetProperty("actions", out var actions) || actions.GetArrayLength() == 0)
+        _firesThisRound++;
+
+        if (AgentConfig.PriorityQueue)
         {
-            lock (_gate) _history.Add($"[{stamp}] 不开火: {reason}");
-            return;
+            _mod.MissionQueue.Add(req, req.Priority, label);
+            AppendLog($"staged P{req.Priority} {label} ({req.Shell})", "staged", req);
+            lock (_gate) _history.Add($"[{stamp}] staged P{req.Priority} {label} {req.Shell}");
+            return JsonSerializer.Serialize(new { result = $"staged P{req.Priority}" });
         }
 
+        var result = MainThread.Run(() => _mod.QueueFireMission(req), 15_000).GetAwaiter().GetResult();
+        AppendLog($"fire {label} ({req.Shell}, P{req.Priority}) -> {result}", "fire", new { req, result });
+        lock (_gate) _history.Add($"[{stamp}] fire {label} {req.Shell} -> {result}");
+        return JsonSerializer.Serialize(new { result });
+    }
+
+    private string ExecuteFireBatch(JsonElement actions)
+    {
+        var results = new List<string>();
         foreach (var action in actions.EnumerateArray())
-        {
-            // A reset/stop mid-round must not leak stale-worldview missions into the new state.
-            if (ct.IsCancellationRequested)
-            {
-                AppendLog("round cancelled mid-execution (reset/stop); remaining actions dropped");
-                return;
-            }
-            var req = new FireMissionRequest
-            {
-                EntityId = action.TryGetProperty("entityId", out var id) ? id.GetString() : null,
-                TargetPoint = action.TryGetProperty("target", out var tp) ? tp.GetString() : null,
-                BearingDeg = action.TryGetProperty("bearingDeg", out var b) ? b.GetSingle() : null,
-                DistanceKm = action.TryGetProperty("distanceKm", out var d) ? d.GetSingle() : null,
-                Shell = action.TryGetProperty("shell", out var s) ? s.GetString() ?? "HE" : "HE",
-                Priority = action.TryGetProperty("priority", out var p) ? Math.Clamp(p.GetInt32(), 0, 100) : 50,
-            };
-            var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
-
-            if (AgentConfig.PriorityQueue)
-            {
-                _mod.MissionQueue.Add(req, req.Priority, label);
-                AppendLog($"staged P{req.Priority} {label} ({req.Shell})", "staged", req);
-                lock (_gate) _history.Add($"[{stamp}] staged P{req.Priority} {label} {req.Shell}");
-            }
-            else
-            {
-                var result = MainThread.Run(() => _mod.QueueFireMission(req), 15_000).GetAwaiter().GetResult();
-                AppendLog($"fire {label} ({req.Shell}, P{req.Priority}) -> {result}", "fire", new { req, result });
-                lock (_gate) _history.Add($"[{stamp}] fire {label} {req.Shell} -> {result}");
-            }
-        }
+            results.Add(ExecuteFire(action));
+        return JsonSerializer.Serialize(new { results });
     }
 }
