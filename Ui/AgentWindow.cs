@@ -75,36 +75,48 @@ public class AgentWindow
             if (l.Length > 0)
                 Add(l);
 
+        // Line budget from the 80%-of-screen height cap: fixed head first, a reserved tail
+        // for tools/log, and the streaming/decision text gets everything left over.
+        const float buttonRowH = 26f;
+        var maxHeight = Screen.height * 0.8f;
+        var maxTotalLines = Math.Max(14, (int)((maxHeight - 30f - buttonRowH - 10f) / LineH));
+        const int toolBudget = 3;
+        const int logBudget = 12;
+        var reservedTail = toolBudget + 1 + logBudget + 1; // tools + log header + log + hint row
+        var textBudget = Math.Max(8, maxTotalLines - lines.Count - reservedTail - 1);
+
         if (agent.IsStreaming)
         {
             Add("—— 思考中 ▌ ——", Color.cyan);
-            foreach (var l in Wrap(agent.StreamingText, 10, fromEnd: true))
+            foreach (var l in Wrap(agent.StreamingText, textBudget, fromEnd: true))
                 Add(l, Color.cyan);
         }
         else if (agent.LastReason.Length > 0)
         {
             Add("—— 最新决策 ——", Color.yellow);
-            foreach (var l in Wrap(agent.LastReason, 5))
+            foreach (var l in Wrap(agent.LastReason, Math.Min(textBudget, 14)))
                 Add(l, Color.yellow);
         }
 
         var tools = agent.RecentToolCalls();
-        foreach (var t in tools.TakeLast(2))
+        foreach (var t in tools.TakeLast(toolBudget))
             Add("🔧 " + (t.Length > WrapChars ? t[..WrapChars] + "…" : t));
 
         var log = agent.LogSnapshot();
         if (log.Count > 0)
         {
             Add("—— 日志 ——");
-            foreach (var entry in log.TakeLast(6))
+            foreach (var entry in log.TakeLast(logBudget))
                 Add(entry.Length > WrapChars + 10 ? entry[..(WrapChars + 10)] + "…" : entry);
         }
 
         if (_buttonsBroken)
             Add("按钮被游戏裁剪: F11=LLM开关 F9=全重置", Color.gray);
 
-        var buttonRowH = 26f;
-        var height = 30f + buttonRowH + lines.Count * LineH + 10f;
+        if (lines.Count > maxTotalLines)
+            lines.RemoveRange(maxTotalLines, lines.Count - maxTotalLines);
+
+        var height = Math.Min(30f + buttonRowH + lines.Count * LineH + 10f, maxHeight);
         var box = new Rect(X, Y, W, height);
         GUI.Box(box, "IronNest Agent Bridge  [F10]");
 
