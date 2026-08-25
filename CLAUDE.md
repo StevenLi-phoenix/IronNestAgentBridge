@@ -18,6 +18,10 @@
 
 ## 构建与部署
 
+**陷阱：含中文的源文件绝不用 PowerShell 的 Get-Content/-replace/Set-Content 修改**——
+中文 Windows 上会以 GBK 误读 UTF-8 再回写，全文乱码（发生过一次，靠 git checkout 救回）。
+只用 Claude 的 Edit 工具或其他 UTF-8 安全的编辑方式。
+
 - `tools\Build.ps1`：游戏运行中拒绝构建（Mods DLL 被锁）；`-m:10` 限并行。
 - 游戏开着时只能 `-p:OutputPath=bin\staging\` 构建暂存，关游戏后拷入 `Mods\`。
 - FCS Logic 是热重载的：改 `IronNestFCS.Logic` 后落盘到 `UserData\IronNestFCS\` 即时生效（等价 F9）。
