@@ -61,6 +61,11 @@
   （圆规，origin=圆心 target=半径端点）。点 = 零长度笔画（origin==target）。
 - 侦察机购买实测通过: 插卡→bearing旋钮SetDialValue→购买钮, 卡价每局不同(读实价)。
 
+**弹道模型（52 个日志样本实证, 残差=里程表舍入 ±0.01°）**
+- 线性无阻力: **仰角 = 距离km × 12 / 装药数**, 60° 封顶; 最大射程 = 装药×5km。
+  与弹种无关(AP/HE 同解)。FCS fork 的 `FirePlanExecutor.TryAnalyticElevation` 即此公式,
+  跟瞄重解全走它, 弹道台只剩超射程 fallback。
+
 **征用台**
 - 购买 = 纯物理模拟：卡片瞬移到槽位 `(6.4814,-2.4675,-22.0968)` → `DraggableItem.MoveToSlot()`
   → 左右炮拨盘 → 点 "Universal Button"。
