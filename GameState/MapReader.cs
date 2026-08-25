@@ -63,17 +63,14 @@ public class MapReader
         return true;
     }
 
+    public const string PlayerTurretPieceName = "Player Turret Piece";
     private Transform? _turretMapModel;
 
-    /// <summary>The single turret miniature on the table (TurretLocationIcon) — inferred ground truth.</summary>
+    /// <summary>The player's draggable turret piece on the table — inferred ground truth.</summary>
     private Transform? TurretMapModel()
     {
-        if (_turretMapModel == null)
-        {
-            var icon = UnityEngine.Object.FindObjectOfType<TurretLocationIcon>();
-            if (icon != null)
-                _turretMapModel = icon.transform;
-        }
+        if (_turretMapModel == null && _mapSurface != null)
+            _turretMapModel = _mapSurface.Find(PlayerTurretPieceName);
         return _turretMapModel;
     }
 
@@ -81,8 +78,8 @@ public class MapReader
     {
         if (_mapSurface == null)
             return Vector3.zero;
-        if (TurretMapModel() is { } model)
-            return _mapSurface.InverseTransformPoint(model.position);
+        if (TurretMapModel() is { } piece)
+            return piece.localPosition;
         if (_turretLocation == null)
             return Vector3.zero;
         return _mapSurface.InverseTransformPoint(_turretLocation.position);
@@ -136,30 +133,21 @@ public class MapReader
 
     /// <summary>Visible entities only — fire missions must not target fog-of-war contacts.</summary>
     /// <summary>
-    /// Move the turret miniature on the table (NOT the real turret anchor) to a km
-    /// position. FCS and our solvers read the miniature as the firing origin. Its
-    /// self-positioning behaviour is disabled on first manual move so it stays put.
+    /// Move the player's turret piece on the table (NOT the real turret) to a km
+    /// position. FCS and our solvers read the piece as the firing origin.
     /// </summary>
     public string SetDeclaredTurret(float kmX, float kmY)
     {
         if (_mapSurface == null)
             return "map not bound";
-        if (TurretMapModel() is not { } model)
-            return "turret map model (TurretLocationIcon) not found in scene";
+        if (TurretMapModel() is not { } piece)
+            return $"'{PlayerTurretPieceName}' not found on the map";
 
-        try
-        {
-            var behaviour = model.GetComponent<TurretLocationIcon>();
-            if (behaviour != null)
-                behaviour.enabled = false; // take manual control; no snap-back
-        }
-        catch { }
-
-        var local = _mapSurface.InverseTransformPoint(model.position);
+        var local = piece.localPosition;
         local.x = (kmX - 10.016f) / MapLocalToKm;
         local.y = (kmY - 5.235f) / MapLocalToKm;
-        model.position = _mapSurface.TransformPoint(local);
-        return $"turret map model moved to km({kmX:F2},{kmY:F2}); solutions now use it as origin";
+        piece.localPosition = local;
+        return $"turret piece moved to km({kmX:F2},{kmY:F2}); solutions now use it as origin";
     }
 
     public bool ReturnMarkerHome(int id)
