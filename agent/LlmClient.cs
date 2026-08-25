@@ -10,7 +10,7 @@ namespace IronNestAgentBridge.Agent;
 /// </summary>
 public static class LlmClient
 {
-    private const int MaxToolRounds = 24;
+    private const int MaxToolRounds = 64;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(300) };
 
