@@ -35,6 +35,35 @@ public class AgentBridgeMod : MelonMod
 
     public string LastFcsSummary { get; private set; } = "";
 
+    /// <summary>
+    /// Cutscene heuristic: the baseline gameplay camera (captured at scene bind) has been
+    /// swapped out or disabled — cinematics always cut cameras. Panel hides and the agent
+    /// pauses while true.
+    /// </summary>
+    public static volatile bool CinematicActive;
+    private UnityEngine.Camera? _baselineCamera;
+    private float _nextCinematicCheck;
+
+    private void UpdateCinematicState()
+    {
+        var cam = UnityEngine.Camera.main;
+        if (_baselineCamera == null)
+        {
+            if (_map.IsBound && cam != null)
+                _baselineCamera = cam;
+            CinematicActive = false;
+            return;
+        }
+
+        var active = cam == null || !ReferenceEquals(cam, _baselineCamera);
+        if (active != CinematicActive)
+        {
+            CinematicActive = active;
+            MelonLogger.Msg($"[AgentBridge] cinematic {(active ? "started" : "ended")} (main camera: {(cam == null ? "none" : cam.name)})");
+            EventLog.Append("cinematic", "game", active ? "cinematic started" : "cinematic ended");
+        }
+    }
+
     /// <summary>Mirrors Application.isFocused for background threads; agent pauses while false.</summary>
     public static volatile bool GameFocused = true;
 
@@ -69,7 +98,9 @@ public class AgentBridgeMod : MelonMod
 
     public override void OnGUI()
     {
-        if (_agent != null)
+        // Mirror FCS's implicit behavior (no HUD until the scene binds) plus an explicit
+        // camera-swap cinematic gate that also covers mid-mission cutscenes.
+        if (_agent != null && _map.IsBound && !CinematicActive)
             _window.Draw(_agent, this);
     }
 
@@ -137,6 +168,13 @@ public class AgentBridgeMod : MelonMod
             _nextDispatch = now + 2f;
             try { DispatchFromQueue(); }
             catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] dispatch failed: {ex.Message}"); }
+        }
+
+        if (now >= _nextCinematicCheck)
+        {
+            _nextCinematicCheck = now + 0.5f;
+            try { UpdateCinematicState(); }
+            catch { }
         }
 
         if (now >= _nextFcsSummary)
@@ -207,6 +245,7 @@ public class AgentBridgeMod : MelonMod
         _deployedMarkers.Clear();
         _map.Unbind();
         _telegraph.Reset();
+        _baselineCamera = null;
         _autoStartDone = false;
         _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
         if (AgentConfig.LlmControl)

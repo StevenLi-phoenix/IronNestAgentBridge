@@ -270,10 +270,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             {
                 // Mirror FCS's focus gate: no decisions (and no token spend) while the game
                 // is in the background; FCS pauses its automation there anyway.
-                if (!AgentBridgeMod.GameFocused)
+                if (!AgentBridgeMod.GameFocused || AgentBridgeMod.CinematicActive)
                 {
                     State = AgentState.Paused;
-                    Status = "paused (game unfocused)";
+                    Status = AgentBridgeMod.CinematicActive ? "paused (cinematic)" : "paused (game unfocused)";
                     if (ct.WaitHandle.WaitOne(1_000)) break;
                     continue;
                 }
