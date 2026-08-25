@@ -72,6 +72,8 @@ public class FcsStatusDto
 public class StateSnapshotDto
 {
     public long Timestamp { get; set; }
+    // Mission clock ("mm:ss") when the snapshot was taken — same axis as event stamps.
+    public string GameTime { get; set; } = "";
     public bool SceneBound { get; set; }
     public float TurretMapX { get; set; }
     public float TurretMapY { get; set; }
@@ -122,7 +124,7 @@ public class BridgeEvent
     public string Type { get; set; } = "";   // telegraph_message | entity_revealed | entity_moved | entity_damaged | entity_destroyed | fcs_task_update
     public string Source { get; set; } = ""; // primary | secondary | map | fcs
     public string Text { get; set; } = "";
-    // In-game mission clock ("mm:ss") at append time; empty when no mission timer runs.
+    // In-game 24h world clock ("HH:mm") at append time; empty when no clock runs yet.
     public string GameTime { get; set; } = "";
     public object? Data { get; set; }
 }
@@ -150,7 +152,7 @@ public class FireMissionRequest
     // this overrides the block after the LLM has seen and accepted the warning.
     public bool AllowDangerouslyFriendlyFire { get; set; }
     // Linear motion model for a moving target the map can't see (telegraph intel):
-    // observed at MotionFrom at mission time MotionAtTime ("mm:ss", default now), moving on
+    // observed at MotionFrom at world-clock time MotionAtTime ("HH:mm" 24h, default now), moving on
     // MotionBearingDeg at MotionSpeedKmh. FCS extrapolates p(t)=p0+v(t-t0) to impact time.
     public string? MotionFrom { get; set; }
     public float? MotionBearingDeg { get; set; }

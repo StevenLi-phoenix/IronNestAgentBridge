@@ -70,12 +70,42 @@ public class AgentBridgeMod : MelonMod
     private bool _cbWasRunning;
     private float _nextCbTick;
 
-    /// <summary>Mission clock in seconds, mirrored for motion-model timestamps.</summary>
+    /// <summary>Game clock in seconds-of-day, mirrored for motion-model timestamps.</summary>
     public static volatile float MissionClockSeconds;
 
-    /// <summary>Mirror the mission stat clock into EventLog.GameClock ("mm:ss").</summary>
+    private GenericTimerSceneSync? _worldClock;
+
+    /// <summary>
+    /// Mirror the in-game 24h world clock (GenericTimerSceneSync, the bunker wall clock —
+    /// the same clock telegraph messages reference) into EventLog.GameClock as "HH:mm".
+    /// Falls back to the mission stopwatch when no world clock exists in the scene.
+    /// </summary>
     private void UpdateGameClock()
     {
+        try
+        {
+            if (_worldClock == null)
+            {
+                foreach (var sync in UnityEngine.Object.FindObjectsOfType<GenericTimerSceneSync>())
+                {
+                    if (_worldClock == null || sync.CurrentTime > _worldClock.CurrentTime)
+                        _worldClock = sync;
+                    MelonLogger.Msg($"[AgentBridge] world clock candidate '{sync.TimerID}' t={sync.CurrentTime:F0}s");
+                }
+            }
+            if (_worldClock != null)
+            {
+                var t = _worldClock.CurrentTime;
+                if (t > 0f)
+                {
+                    MissionClockSeconds = t;
+                    EventLog.GameClock = $"{(int)(t / 3600) % 24:00}:{(int)(t / 60) % 60:00}";
+                    return;
+                }
+            }
+        }
+        catch { _worldClock = null; }
+
         try
         {
             var tracker = MissionStatsTracker.Instance;
@@ -88,7 +118,7 @@ public class AgentBridgeMod : MelonMod
         catch { }
     }
 
-    private sealed record InFlightShell(string Label, string Shell, float KmX, float KmY, float FiredAt);
+    private sealed record InFlightShell(string Label, string Shell, float KmX, float KmY, float FiredAt, string FiredAtGame = "");
     private readonly List<InFlightShell> _inFlight = new();
     private const float InFlightTimeoutSeconds = 150f;
     private const float ImpactMatchKm = 3f;
@@ -111,7 +141,8 @@ public class AgentBridgeMod : MelonMod
     {
         var now = UnityEngine.Time.realtimeSinceStartup;
         _inFlight.RemoveAll(s => now - s.FiredAt > InFlightTimeoutSeconds);
-        return _inFlight.Select(s => $"{s.Label} ({s.Shell}, 已飞{now - s.FiredAt:F0}s)").ToList();
+        return _inFlight.Select(s =>
+            $"{s.Label} ({s.Shell}, 出膛@{(s.FiredAtGame.Length > 0 ? s.FiredAtGame : "?")}, 已飞{now - s.FiredAt:F0}s)").ToList();
     }
 
     /// <summary>
@@ -376,7 +407,7 @@ public class AgentBridgeMod : MelonMod
             // the agent doesn't re-queue a target whose shell is still flying.
             var dep = _deployedMarkers[id];
             _deployedMarkers.Remove(id);
-            _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup });
+            _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup, FiredAtGame = EventLog.GameClock });
             EventLog.Append("shell_fired", "fcs",
                 $"炮弹出膛: {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
         }
@@ -419,6 +450,7 @@ public class AgentBridgeMod : MelonMod
         _impacts.Reset();
         _telegraph.Reset();
         _baselineCamera = null;
+        _worldClock = null;
         _cbWasRunning = false;
         TurretCalibrated = false;
         _lastPieceLocal = null;
@@ -432,6 +464,7 @@ public class AgentBridgeMod : MelonMod
         var snapshot = new StateSnapshotDto
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            GameTime = EventLog.GameClock,
             SceneBound = _map.IsBound,
             Teleprinters = _telegraph.ReadAll(),
             Guns = GunStateReader.ReadBoth(),
@@ -657,9 +690,12 @@ public class AgentBridgeMod : MelonMod
             if (!string.IsNullOrWhiteSpace(req.MotionAtTime))
             {
                 var parts = req.MotionAtTime!.Split(':');
-                if (parts.Length != 2 || !int.TryParse(parts[0], out var mm) || !int.TryParse(parts[1], out var ss))
-                    return $"cannot parse motionAtTime '{req.MotionAtTime}' (expect \"mm:ss\", same clock as event stamps)";
-                t0 = mm * 60 + ss;
+                if (parts.Length is < 2 or > 3
+                    || !int.TryParse(parts[0], out var hh) || !int.TryParse(parts[1], out var mm)
+                    || (parts.Length == 3 && !int.TryParse(parts[2], out _)))
+                    return $"cannot parse motionAtTime '{req.MotionAtTime}' (expect 24h \"HH:mm\", same clock as event stamps)";
+                var ss = parts.Length == 3 && int.TryParse(parts[2], out var s3) ? s3 : 0;
+                t0 = hh * 3600 + mm * 60 + ss;
             }
             var rad = mb * MathF.PI / 180f;
             var speedLocalPerSec = mv / 3600f / 3.8164f;

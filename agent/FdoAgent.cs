@@ -16,6 +16,10 @@ public class FdoAgent
 - 战场报告(secondary): 观测员的方位角交汇报告
 - 指挥桌事件(map): 新揭示/移动/受损/摧毁的目标
 - state快照: 所有可见目标的方位角/距离/护甲/免疫弹种、火炮与FCS状态
+所有输入都带**24小时制游戏世界时钟**时间参照(事件的[HH:mm ...]、快照的"@ HH:mm"、
+工具回执的[@HH:mm])——与掩体挂钟/怀表、统帅部电文中的时刻引用同一时钟。这是唯一时间轴:
+判断情报新旧、运动模型的motionAtTime、倒计时推算都以它为准; 对话历史里的旧数据
+以其时间戳理解, 不代表当前状态。
 
 你的职责是战术决策: 打谁、用什么弹、什么顺序。执行完全由FCS自动完成:
 你排任务后FCS会自动购弹、装填、装药、调仰角、转炮塔。**任何时候都可以排任务**,
@@ -48,8 +52,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     目标, 临发射按实测速度外推提前量(备炮+飞行时间), 你不需要做任何预测。
   * 迷雾中的移动目标(电报报告的车队/纵队等): 把情报逐字转录成运动模型交给FCS:
     fire(target=观测点, motionFrom=观测点, motionBearingDeg=航向, motionSpeedKmh=速度,
-    motionAtTime=报告时刻"mm:ss")。FCS用一次函数p(t)=p0+v(t-t0)把弹着外推到命中时刻。
-    事件时间戳与motionAtTime同一时钟, 直接抄即可。
+    motionAtTime=报告时刻"HH:mm", 24h制)。FCS用一次函数p(t)=p0+v(t-t0)把弹着外推到命中时刻。
+    事件时间戳与motionAtTime同一时钟, 直接抄即可。本质是盲射: 观测点与预测航线
+    **不需要已揭示**, 不在entities[]是正常的, 不要因此犹豫或改用别的方式。
   * 被跟踪目标进雾后模型继续外推(约90s后标记不可靠); 不要为同一移动目标叠加多发,
     等弹着评估。
 - 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
@@ -163,7 +168,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "motionFrom": { "type": "string", "description": "迷雾中移动目标的运动模型: 观测点(网格或'kmX,kmY')。与motionBearingDeg/motionSpeedKmh一起把电报情报转录成一次函数, FCS自动外推提前量。可见目标不需要——用entityId即自动跟踪" },
           "motionBearingDeg": { "type": "number", "description": "运动模型: 目标运动航向(北=0顺时针)" },
           "motionSpeedKmh": { "type": "number", "description": "运动模型: 目标速度km/h" },
-          "motionAtTime": { "type": "string", "description": "运动模型: 观测时刻'mm:ss'(与事件时间戳同轴), 省略=当下" }
+          "motionAtTime": { "type": "string", "description": "运动模型: 观测时刻'HH:mm'(24h制, 与事件时间戳/电文时刻同轴), 省略=当下" }
         },
         "required": ["shell"]
       }
@@ -425,7 +430,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     idleSlices = 0;
                     events = new List<BridgeEvent>
                     {
-                        new() { Source = "agent", Type = "recheck", Text = "定时复查: 无新事件, 重新评估当前战场态势" },
+                        new() { Source = "agent", Type = "recheck", Text = "定时复查: 无新事件, 重新评估当前战场态势", GameTime = EventLog.GameClock },
                     };
                 }
 
@@ -448,7 +453,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     private string BuildCompactState(StateSnapshotDto s)
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("## 战场状态");
+        sb.AppendLine(s.GameTime.Length > 0 ? $"## 战场状态 @ {s.GameTime} (任务时钟)" : "## 战场状态");
         // Never print the turret coordinate here — the agent's knowledge of its own
         // position must come from the wire + its own calibration, or it echoes whatever
         // value the system shows (observed failure mode). Calibration is tracked as an
@@ -696,6 +701,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     => ExecuteFireBatch(acts),
                 _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
             };
+            // Every payload the LLM receives carries a time reference: tool results are
+            // true at execution time, not at read time.
+            if (EventLog.GameClock.Length > 0)
+                result = $"[@{EventLog.GameClock}] {result}";
             var argsText = args.GetRawText();
             var entry = $"{name}({(argsText.Length > 120 ? argsText[..120] + "…" : argsText)}) → {result}";
             lock (_gate)
