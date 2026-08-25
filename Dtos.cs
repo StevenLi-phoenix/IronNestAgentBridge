@@ -136,4 +136,12 @@ public class FireMissionRequest
     public int MarkerId { get; set; } = 4;   // which map marker to commandeer for entity targeting
     // 0-100; >=90 (counter-battery) skips the FCS pairing window and wins gun assignment first.
     public int Priority { get; set; } = 50;
+    // Small aim-point nudge in km applied after the target resolves (any of the three paths).
+    // Exists so the LLM can shift the burst away from nearby friendlies while keeping the
+    // target designation; capped at ±0.5 km — larger shifts should just aim elsewhere.
+    public float? OffsetKmX { get; set; }
+    public float? OffsetKmY { get; set; }
+    // A friendly inside the shell's blast radius blocks the mission with a warning;
+    // this overrides the block after the LLM has seen and accepted the warning.
+    public bool ConfirmFriendlyFire { get; set; }
 }

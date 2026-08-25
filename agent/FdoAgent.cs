@@ -35,6 +35,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   **弹种可用性**: 每个任务的征用台只有部分弹种卡, 见战场状态中的"征用台可购弹种"
   清单——只能从该清单选弹, 清单外的弹种FCS购买必败(fail计数+1白白浪费炮位时间)。
   首选弹种不可用时按用途降级替代(如APHE缺货→AP)。
+- 合并打击(一发多杀): 排任务前先算目标间距——多个软目标彼此相距不超过弹药爆炸半径
+  (见弹药规格表)时, **一发瞄准目标群的几何中点**(用target坐标点名中点)即可全灭,
+  严禁逐个各排一发浪费弹药与炮位(例: 两个步兵组相距0.1km, 一发HE覆盖两者)。
+  fire成功回执会列出"爆炸半径可同时覆盖"的目标名单——用它核对合并是否成立,
+  没被覆盖到的目标才单独排任务。
+- 友军安全: 弹着点爆炸半径内有友军/平民(role含Ally/Spotter/civilian)时fire会拒绝并警告。
+  此时优先用offsetKmX/offsetKmY把弹着点向**远离友军一侧**移出爆炸半径(牺牲部分毁伤换
+  安全), 或改用爆炸半径更小的弹种; 只有统帅部明确要求贴身支援时才confirmFriendlyFire=true。
 - 反炮兵威胁下优先高价值目标
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
@@ -56,6 +64,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   若多发呈现**一致的系统性偏移向量**, 说明假定炮位有误——把偏移向量反向加到当前
   假定炮位上(用solve_target/坐标运算), set_assumed_turret_position修正, 后续所有射击自动归正。
   随机散布(每发偏向不同)则是正常弹道误差, 不要修炮位。
+- 弹着修正提示(impact_hint事件, 即地图上的黄色箭头): 脱靶弹着会附带指向附近目标的
+  **方向扇形**和**粗略距离**。注意: 角度给的是一个范围而非精确值, 距离提示也不精确
+  (量化区间)——两者都严禁当作解算输入。只做定性修正: 下一发沿提示方向、按提示距离的
+  量级移动瞄点再试射, 逐发收敛。"弹着确认命中"(无箭头)说明爆炸半径内已有目标。
 - 弹药成本(征用点): STAR=2, HE/AP=18。因此侦察性盲射一律用STAR——它的任务是照亮/
   揭示区域, 不是摧毁; 用AP/HE盲射等于花9倍的钱赌一发不准的弹。只有对已揭示目标
   (entityId)才花HE/AP做摧毁性射击。例外: 统帅部明确限制弹种时从其指令。
@@ -120,7 +132,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "bearingDeg": { "type": "number" },
           "distanceKm": { "type": "number" },
           "shell": { "type": "string", "description": "弹种, 从征用台清单选" },
-          "priority": { "type": "number", "description": "0-100, 默认50; 反炮兵>=90" }
+          "priority": { "type": "number", "description": "0-100, 默认50; 反炮兵>=90" },
+          "offsetKmX": { "type": "number", "description": "弹着点微偏移km(东正西负, |≤0.5|): 在选定目标基础上把弹着点移开, 用于避开近旁友军(向远离友军方向偏)或瞄准目标群中点" },
+          "offsetKmY": { "type": "number", "description": "弹着点微偏移km(北正南负, |≤0.5|)" },
+          "confirmFriendlyFire": { "type": "boolean", "description": "友军在爆炸半径内时fire会拒绝并警告; 仅在确认接受误伤风险时置true重试" }
         },
         "required": ["shell"]
       }
@@ -698,6 +713,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             DistanceKm = action.TryGetProperty("distanceKm", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetSingle() : null,
             Shell = action.TryGetProperty("shell", out var s) ? s.GetString() ?? "HE" : "HE",
             Priority = action.TryGetProperty("priority", out var p) && p.ValueKind == JsonValueKind.Number ? Math.Clamp(p.GetInt32(), 0, 100) : 50,
+            OffsetKmX = action.TryGetProperty("offsetKmX", out var ox) && ox.ValueKind == JsonValueKind.Number ? ox.GetSingle() : null,
+            OffsetKmY = action.TryGetProperty("offsetKmY", out var oy) && oy.ValueKind == JsonValueKind.Number ? oy.GetSingle() : null,
+            ConfirmFriendlyFire = action.TryGetProperty("confirmFriendlyFire", out var cff) && cff.ValueKind == JsonValueKind.True,
         };
         var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
         var stamp = DateTime.Now.ToString("HH:mm:ss");

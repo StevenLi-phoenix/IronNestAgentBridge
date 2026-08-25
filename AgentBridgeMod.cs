@@ -455,6 +455,17 @@ public class AgentBridgeMod : MelonMod
             return "need entityId, target, or bearingDeg+distanceKm";
         }
 
+        var offX = req.OffsetKmX ?? 0f;
+        var offY = req.OffsetKmY ?? 0f;
+        if (Math.Abs(offX) > 0.5f || Math.Abs(offY) > 0.5f)
+            return "offset exceeds ±0.5km — offsets are for nudging the burst clear of friendlies; aim at different coordinates instead";
+        if (offX != 0f || offY != 0f)
+        {
+            mapX += offX / 3.8164f;
+            mapY += offY / 3.8164f;
+            label += $" 偏移({offX:+0.00;-0.00},{offY:+0.00;-0.00})km";
+        }
+
         // Defense in depth: never fling a marker off the table on an out-of-bounds solution.
         var kmXCheck = 10.016f + mapX * 3.8164f;
         var kmYCheck = 5.235f + mapY * 3.8164f;
@@ -475,6 +486,45 @@ public class AgentBridgeMod : MelonMod
         if (req.DistanceKm is { } dist && dist > maxRange)
             return $"distance {dist:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
 
+        // Blast-radius survey around the final aim point: friendlies inside the radius block
+        // the mission (soft — confirmFriendlyFire overrides); visible hostiles inside it are
+        // reported back so the LLM can verify a merged strike actually covers its cluster.
+        var suffix = "";
+        var blastKm = (spec?.ImpactRadius ?? 0f) / 1000f;
+        if (blastKm > 0.001f)
+        {
+            var friendliesInside = new List<string>();
+            var friendliesNear = new List<string>();
+            var hostilesCovered = new List<string>();
+            foreach (var e in _map.ReadEntities())
+            {
+                if (!e.IsAlive) continue;
+                var dx = 10.016f + e.MapX * 3.8164f - kmXCheck;
+                var dy = 5.235f + e.MapY * 3.8164f - kmYCheck;
+                var dKm = MathF.Sqrt(dx * dx + dy * dy);
+                var friendly = e.Role.Contains("Ally") || e.Role == "Spotter"
+                               || e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
+                               || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase);
+                if (friendly && dKm <= blastKm)
+                    friendliesInside.Add($"{e.Id}({e.Role},距弹着{dKm:F2}km)");
+                else if (friendly && dKm <= blastKm * 1.5f)
+                    friendliesNear.Add($"{e.Id}({dKm:F2}km)");
+                else if (!friendly && dKm <= blastKm)
+                    hostilesCovered.Add($"{e.Id}({dKm:F2}km)");
+            }
+
+            if (friendliesInside.Count > 0 && !req.ConfirmFriendlyFire)
+                return $"友军误伤警告 — 已拒绝: {string.Join(", ", friendliesInside)} 在弹着点km({kmXCheck:F2},{kmYCheck:F2})" +
+                       $"的{req.Shell}爆炸半径{blastKm * 1000f:F0}m内。用offsetKmX/offsetKmY把弹着点向远离友军一侧移出半径" +
+                       "(会牺牲部分毁伤), 或换更小爆炸半径的弹种; 确认接受误伤才用confirmFriendlyFire=true重试";
+            if (friendliesInside.Count > 0)
+                suffix += $"; 警告: 已确认误伤风险, 友军在爆炸半径内: {string.Join(", ", friendliesInside)}";
+            else if (friendliesNear.Count > 0)
+                suffix += $"; 注意: 友军贴近弹着点(≤1.5×爆炸半径): {string.Join(", ", friendliesNear)}";
+            if (hostilesCovered.Count > 0)
+                suffix += $"; 爆炸半径({blastKm * 1000f:F0}m)可同时覆盖: {string.Join(", ", hostilesCovered)}";
+        }
+
         var markerId = NextMarkerId();
         if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))
         {
@@ -484,17 +534,27 @@ public class AgentBridgeMod : MelonMod
                 _deployedMarkers[markerId] = label;
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as marker {markerId}");
+                return "ok" + suffix;
             }
             return result;
         }
 
         // No marker available — fall back to direct injection, display-only loss.
-        if (req.BearingDeg is float b2 && req.DistanceKm is float d2)
+        // Solution re-derived from the FINAL aim point so an offset survives this path too.
+        if (req.BearingDeg is float && req.DistanceKm is float)
         {
+            var turretLocal = _map.TurretLocalOnMap();
+            var ddx = mapX - turretLocal.x;
+            var ddy = mapY - turretLocal.y;
+            var b2 = (MathF.Atan2(ddx, ddy) * 57.29578f % 360f + 360f) % 360f;
+            var d2 = MathF.Sqrt(ddx * ddx + ddy * ddy) * 3.8164f;
             var result = _fcs.EnqueueByBearing(b2, d2, req.Shell, 0, req.Priority);
             if (result == "ok")
+            {
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued at {label} ({req.Shell}), no marker available");
+                return "ok" + suffix;
+            }
             return result;
         }
         return "no map marker available for entity targeting";
