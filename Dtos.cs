@@ -84,6 +84,24 @@ public class StateSnapshotDto
     // Shell punchcards physically present on the requisition console — the only buyable types this mission.
     public List<string> AvailableShells { get; set; } = new();
     public List<CardDto> Cards { get; set; } = new();
+    public List<ShellSpecDto> ShellSpecs { get; set; } = new();
+}
+
+public class ShellSpecDto
+{
+    public string Id { get; set; } = "";
+    public int Damage { get; set; }
+    public float ImpactRadius { get; set; }
+    public int ProjectilesPerShell { get; set; }
+    public int MaxCharges { get; set; }
+    public List<ChargeRangeDto> ChargeRanges { get; set; } = new();
+}
+
+public class ChargeRangeDto
+{
+    public int Charge { get; set; }
+    public float MinKm { get; set; }
+    public float MaxKm { get; set; }
 }
 
 public class CardDto

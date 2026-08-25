@@ -327,6 +327,8 @@ public class AgentBridgeMod : MelonMod
             Cards = AmmoReader.ReadCards(),
         };
         snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
+        var cardIds = new HashSet<string>(snapshot.AvailableShells, StringComparer.OrdinalIgnoreCase);
+        snapshot.ShellSpecs = AmmoReader.ReadShellSpecs().Where(s => cardIds.Contains(s.Id)).ToList();
         snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);
         snapshot.Fcs.RightTask = AnnotateTask(snapshot.Fcs.RightTask);
         snapshot.Fcs.PendingTasks = snapshot.Fcs.PendingTasks.Select(t => AnnotateTask(t)!).ToList();
@@ -462,8 +464,10 @@ public class AgentBridgeMod : MelonMod
         var kmYCheck = 5.235f + mapY * 3.8164f;
         if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
             return $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected (bad solution?)";
-        if (req.DistanceKm is > 30f)
-            return $"distance {req.DistanceKm:F1}km exceeds any plausible range — rejected";
+        var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, req.Shell, StringComparison.OrdinalIgnoreCase));
+        var maxRange = spec?.ChargeRanges.Count > 0 ? spec.ChargeRanges.Max(c => c.MaxKm) : 40f;
+        if (req.DistanceKm is { } dist && dist > maxRange)
+            return $"distance {dist:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
 
         var markerId = NextMarkerId();
         if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))

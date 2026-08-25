@@ -414,6 +414,19 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         if (specials.Count > 0)
             sb.AppendLine("征用台特殊卡及单价(仅经requisition_card工具使用, 不是弹种, 注意贵价卡值不值得花): "
                           + string.Join(", ", specials.Select(CardLabel)));
+        if (s.ShellSpecs.Count > 0)
+        {
+            sb.AppendLine("弹药规格(爆炸半径决定覆盖/友军安全距离; 射程按装药档):");
+            foreach (var spec in s.ShellSpecs)
+            {
+                var ranges = spec.ChargeRanges.Count > 0
+                    ? string.Join(" ", spec.ChargeRanges.OrderBy(c => c.Charge).Select(c => $"C{c.Charge}:{c.MinKm:F1}-{c.MaxKm:F1}km"))
+                    : "射程表未知";
+                sb.AppendLine($"  {spec.Id}: 爆半径{spec.ImpactRadius:F0}m 伤害{spec.Damage}"
+                              + (spec.ProjectilesPerShell > 1 ? $"×{spec.ProjectilesPerShell}弹" : "")
+                              + $" {ranges}");
+            }
+        }
         sb.AppendLine("可见实体(entityId必须逐字取自此表):");
         if (s.Entities.Count == 0)
             sb.AppendLine("  (无 — 没有任何目标被揭示)");

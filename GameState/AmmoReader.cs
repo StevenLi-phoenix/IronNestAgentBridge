@@ -1,4 +1,5 @@
 using Il2Cpp;
+using Il2CppInterop.Runtime;
 using UnityEngine;
 
 namespace IronNestAgentBridge.GameState;
@@ -10,6 +11,51 @@ namespace IronNestAgentBridge.GameState;
 public static class AmmoReader
 {
     public static List<string> ReadAvailableShells() => ReadCards().Select(c => c.Id).ToList();
+
+    private static List<ShellSpecDto>? _specCache;
+
+    /// <summary>
+    /// Static shell specs from the game's ShellDefinition assets: blast radius, damage,
+    /// submunition count, per-charge min/max range. Cached — asset data never changes.
+    /// </summary>
+    public static List<ShellSpecDto> ReadShellSpecs()
+    {
+        if (_specCache is { Count: > 0 })
+            return _specCache;
+
+        var result = new List<ShellSpecDto>();
+        foreach (var obj in Resources.FindObjectsOfTypeAll(Il2CppType.Of<ShellDefinition>()))
+        {
+            var def = obj.TryCast<ShellDefinition>();
+            if (def == null || string.IsNullOrWhiteSpace(def.ShellId))
+                continue;
+            var id = def.ShellId.Replace("SMOKE", "SMK").Replace("Shell", "").Trim();
+            if (result.Any(s => s.Id == id))
+                continue;
+            var spec = new ShellSpecDto { Id = id };
+            try { spec.Damage = def.Damage; } catch { }
+            try { spec.ImpactRadius = def.ImpactRadius; } catch { }
+            try { spec.ProjectilesPerShell = def.projectilesPerShell; } catch { }
+            try { spec.MaxCharges = def.maxPowderCharges; } catch { }
+            try
+            {
+                if (def.chargeRangeMappings != null)
+                    foreach (var m in def.chargeRangeMappings)
+                        if (m != null)
+                            spec.ChargeRanges.Add(new ChargeRangeDto
+                            {
+                                Charge = m.chargeLevel,
+                                MinKm = m.minRange,
+                                MaxKm = m.maxRange,
+                            });
+            }
+            catch { }
+            result.Add(spec);
+        }
+        if (result.Count > 0)
+            _specCache = result;
+        return result;
+    }
 
     public static List<CardDto> ReadCards()
     {
