@@ -16,6 +16,15 @@
   改用 FcsStatusDto.SerialToMarker 结构化映射（gateway 反射读 serial+targetId），不再正则
   解析显示串；FirePlan.Label、FirePriorityStatusText、队列行均显示 #N；stock FCS（无 serial
   字段）时 DescribeTask 回退旧 T 前缀。
+- **炮击顺序规划**（FCS TaskDispatcher.PlanEngagementOrder，每轮规划在解算刷新后重排队列本体）：
+  优先级带硬外序；带内二维序列优化——方位转塔与仰角摇柄并行，单步成本
+  max(Δb/4°s, |Δe|/2°s)（与 AlignmentScore 同一 Chebyshev 度量），带内 ≤10 个用 Held-Karp
+  精确 DP、超了同度量贪心；仰角未解算用线性模型估计（distance×12/charge）。队列本体即计划序
+  → HUD（"计划炮击顺序"）、agent 快照、匹配器平局裁决自动对齐；日志带估计总调炮秒数。
+- **杂项清理**：卡片请求 1s 轮询循环改为入队即踢的按需排空协程（P100 中途照样插队）；
+  PurchaseDeck 三条购买流程去重（InsertCard/PressBuy 公共核心）+ NormalizeCardId 统一
+  （修了 BuyCardById 漏 PCLM→PLCM 导致按归一名买不到的 bug）；调度器删 attempted 假动作、
+  左右重复块收边表（RetrySides）。
 - 本轮新增（桥）：任务生命周期自动化（结束自动停 agent / 新任务 FullReset 清历史，
   MissionManager.CurrentPhase 轮询）；`counter_battery` 倒计时事件（20s 一报）；
   24h 世界时钟时间轴（所有事件/快照/工具回执带 [@HH:mm]）；事件防抖 1s + 去重；
