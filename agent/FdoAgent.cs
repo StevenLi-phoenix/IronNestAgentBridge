@@ -511,7 +511,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                       + $" | T1(左炮): {s.Fcs.LeftTask ?? "-"} | T2(右炮): {s.Fcs.RightTask ?? "-"}");
         if (s.Fcs.PendingTasks.Count > 0)
         {
-            sb.AppendLine("FCS待执行(#N=任务唯一编号, adjust/cancel用它):");
+            sb.AppendLine("FCS待执行(#N=任务唯一编号, adjust/cancel用它; 排列=计划炮击顺序: 优先级带内按方位就近连打):");
             foreach (var t in s.Fcs.PendingTasks)
                 sb.AppendLine("  " + t);
         }
