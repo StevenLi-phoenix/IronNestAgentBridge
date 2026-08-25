@@ -60,8 +60,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     在入队时按棋子实时位置推导。firing_solution仅用于人工核对诸元, 不是开火必经步骤。
   你只负责从电文中抄录观测数据和选择组合, 数值计算一律交给工具。
 - 侦察机航线规划: 侦察机从startGrid沿bearingDeg直线飞行, 在地图上揭示一条带状区域,
-  **航程有限, 最长约15格(≈15km)**。规划口诀: 起点选在目标区域的近侧, 航向穿过目标区,
-  让想侦察的区域落在起点后15格的航线段内。航线全程必须在地图内——指向地图边缘外/
+  **航程有限, 最长约12格(≈12km)**。规划口诀: 起点选在目标区域的近侧, 航向穿过目标区,
+  让想侦察的区域落在起点后12格的航线段内。航线全程必须在地图内——指向地图边缘外/
   贴边起飞等于把昂贵的侦察机浪费在墙上。
 - 主动侦察(严禁干等): 统帅部电文宣称存在目标/给了任务目标, 但entities[]为空或没有
   对应实体时, **idle不会推进任何进度**——迷雾不会自己散开。必须主动行动: 对电文情报点/
@@ -196,7 +196,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         "properties": {
           "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" },
           "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查飞行方向方位角(北=0顺时针)" },
-          "startGrid": { "type": "string", "description": "侦察类卡: 起飞网格单元(如'P4')——飞机从此格沿bearingDeg方向飞行揭雾, 航程最长约15格, 必须与bearing一起规划成落在地图内的航线" },
+          "startGrid": { "type": "string", "description": "侦察类卡: 起飞网格单元(如'P4')——飞机从此格沿bearingDeg方向飞行揭雾, 航程最长约12格, 必须与bearing一起规划成落在地图内的航线" },
           "priority": { "type": "number", "description": "0-100, 默认50; 紧急转移类=100" }
         },
         "required": ["cardId"]
