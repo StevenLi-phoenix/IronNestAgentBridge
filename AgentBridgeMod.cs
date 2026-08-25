@@ -31,7 +31,6 @@ public class AgentBridgeMod : MelonMod
     private float _nextMapPoll;
     private float _nextTelegraphPoll;
     private float _nextFcsSummary;
-    private bool _autoStartDone;
 
     public string LastFcsSummary { get; private set; } = "";
 
@@ -266,10 +265,7 @@ public class AgentBridgeMod : MelonMod
         _baselineCamera = null;
         TurretCalibrated = false;
         _lastPieceLocal = null;
-        _autoStartDone = false;
         _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
-        if (AgentConfig.LlmControl)
-            _autoStartDone = false; // rebind path will auto-start
     }
 
     /// <summary>
