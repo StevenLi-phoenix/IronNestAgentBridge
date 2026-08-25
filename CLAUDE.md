@@ -164,8 +164,10 @@
 - 事件游标 `_eventCursor`（agent 线程独占）：主循环取事件推进它；**ExecuteTool 出口把
   工具执行期间新到的事件以"[随查战场新事件]"搭在工具结果尾部**并同步推进游标（主循环不会
   重发）——agent 同轮就能对误伤预警/弹着反应；自身动作触发的事件也会回声在结果里（无害确认）。
-- 关卡情报库（提示词"已知关卡情报"节，按简报中的关卡名匹配）：《敌人如潮》——敌全部
-  自北来；侦察自动，**严禁买 ScoutPlane**；侦察动作=北面部署 Spotter + 北面打 STAR。
+- 关卡情报库 `FdoAgent.MapIntelTable`：**仅当前关卡命中时注入快照**（"关卡情报(指挥官提供)"
+  行；关卡名读 `MissionManager.Instance.CurrentMission.MissionName.Get()` → 快照 `MissionName`，
+  子串匹配、键用游戏显示语言）。现有条目：《敌人如潮》——敌全部自北来；侦察自动，
+  **严禁买 ScoutPlane**；侦察动作=北面部署 Spotter + 北面打 STAR。新经验往表里加即可。
 - 作战模式判别：活动场景名（快照 `SceneName`）——`Mission Chill`/`Mission Challenging`=无尽
   （Gamemodes 枚举同名），`MissionBase`=剧本任务，`Mission tutorial N`=教程；快照文本"作战模式"
   行连同反炮兵含义一起给 agent（无尽=毁炮只延时，剧本=全灭停表）。

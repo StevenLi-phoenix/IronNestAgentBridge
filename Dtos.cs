@@ -94,6 +94,9 @@ public class StateSnapshotDto
     // Active Unity scene name — the mode discriminator: "Mission Chill"/"Mission Challenging"
     // are the endless modes, "MissionBase" hosts scripted missions, "Mission tutorial N" tutorials.
     public string? SceneName { get; set; }
+    // Localized display name of the current mission (MissionManager.CurrentMission) — keys
+    // the per-map intel table, so map-specific doctrine loads only inside that map.
+    public string? MissionName { get; set; }
     public List<ShellSpecDto> ShellSpecs { get; set; } = new();
     // Shells fired but not yet landed: gone from the FCS queue and the gun slots, yet their
     // targets are already served — re-queuing them double-spends ammunition.

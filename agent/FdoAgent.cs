@@ -114,10 +114,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   * 开火: 位置类目标用action的target字段("kmX,kmY"或网格)直接点名——诸元由系统
     在入队时按棋子实时位置推导。firing_solution仅用于人工核对诸元, 不是开火必经步骤。
   你只负责从电文中抄录观测数据和选择组合, 数值计算一律交给工具。
-- 已知关卡情报(按任务简报/电文中的关卡名匹配, 命中即优先于通用侦察学说):
-  * **《敌人如潮》**(敌潮防守图): 敌军**全部从北方进入**——预警/侦察资源一律朝北配置,
-    火力预案也默认朝北。本图**侦察是自动的, 严禁购买ScoutPlane**(纯浪费60点);
-    侦察动作只需两样: 部署FO观测员(Spotter, 1点, 部署格选北面)+对北面可疑区打STAR照明。
+- 关卡情报: 快照可能带"关卡情报(指挥官提供)"行——那是对当前关卡的实地经验,
+  **优先于通用学说**, 与之冲突时听关卡情报的。
 - 侦察机航线规划: 侦察机从startGrid沿bearingDeg直线飞行, 在地图上揭示一条带状区域,
   **航程有限, 最长约12格(≈12km)**。规划口诀: 起点选在目标区域的近侧, 航向穿过目标区,
   让想侦察的区域落在起点后12格的航线段内。飞出地图不违规, 但图外航段揭示不了任何
@@ -619,6 +617,16 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         }
     }
 
+    // Commander-supplied per-map field experience, injected into the snapshot ONLY while the
+    // matching mission is loaded (substring match on the localized mission name). Keys must be
+    // written in the language the game displays.
+    private static readonly (string Key, string Intel)[] MapIntelTable =
+    {
+        ("敌人如潮", "敌军全部从北方进入——预警/侦察资源一律朝北配置, 火力预案默认朝北。" +
+                    "本图侦察是自动的, **严禁购买ScoutPlane**(纯浪费); " +
+                    "侦察动作只需两样: 北面部署FO观测员(Spotter)+对北面可疑区打STAR照明。"),
+    };
+
     private string BuildCompactState(StateSnapshotDto s)
     {
         var sb = new System.Text.StringBuilder();
@@ -636,6 +644,13 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 var t when t!.StartsWith("Mission tutorial") => $"教程关({t})",
                 var other => $"未知场景 '{other}' (按剧本任务处置)",
             });
+        if (!string.IsNullOrEmpty(s.MissionName))
+        {
+            sb.AppendLine($"当前关卡: {s.MissionName}");
+            foreach (var (key, intel) in MapIntelTable)
+                if (s.MissionName!.Contains(key, StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine("关卡情报(指挥官提供, 优先于通用学说): " + intel);
+        }
         if (!string.IsNullOrEmpty(s.MapExtentKm))
             sb.AppendLine($"本关地图实测范围: {s.MapExtentKm} — 瞄准点出界会被fire拒绝; 规划盲射/侦察航线前先对照此范围");
         sb.AppendLine(s.TurretCalibrated
