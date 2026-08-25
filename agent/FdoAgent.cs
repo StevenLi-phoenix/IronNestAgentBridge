@@ -55,7 +55,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE", "priority": 50},
                {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP", "priority": 30}],
    "reason": "..."}
-  不开火时输出 {"actions": [], "reason": "..."}
+  不开火时输出 {"actions": [], "reason": "..."}。
+  **注意: 决策JSON是普通文本回复的一部分, 绝不要把它作为工具调用(function call)发送。**
 - priority规则: 反炮兵/敌方炮兵威胁=90以上(FCS会跳过凑单等待立即抢占下一门空炮);
   统帅部点名的优先目标=70; 常规高价值(仓库/工事/指挥所)=60; 普通目标=50;
   低价值步兵/补刀=30。priority直接写入FCS任务队列, FCS的matcher按优先级分配炮位,
@@ -458,6 +459,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "solve_target" => SolveAndPlot(args),
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 "set_turret_position" => ExecuteSetTurret(args, turretKm),
+                // Some models hallucinate the decision JSON as a tool call — steer them back.
+                _ when name == "function_calls" || args.TryGetProperty("actions", out _)
+                    => JsonSerializer.Serialize(new { error = "这不是工具。{\"actions\":[...],\"reason\":\"...\"} 决策JSON必须作为普通文本回复直接输出, 不要通过工具调用发送。请重新以文本输出你的决策。" }),
                 _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
             };
             var argsText = args.GetRawText();
