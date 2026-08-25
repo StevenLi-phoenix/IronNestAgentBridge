@@ -107,8 +107,11 @@ public class FcsGateway
         object? F(string name) => t.GetField(name, AnyInstance)?.GetValue(task);
         try
         {
+            var motion = "";
+            try { motion = t.GetMethod("MotionSuffix", AnyInstance)?.Invoke(task, new object[] { true }) as string ?? ""; }
+            catch { }
             return $"T{F("targetId")} {F("bulletType")} brg {F("angel"):F1} dist {F("distance"):F2}km " +
-                   $"chg {F("chargeCount")} [{F("progress")}]" +
+                   $"chg {F("chargeCount")} [{F("progress")}]{motion}" +
                    (Equals(F("failureReason"), "") ? "" : $" fail: {F("failureReason")}");
         }
         catch
