@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-08-25 会话交接）
 
-- **FCS Logic 已热部署最新；桥最新版在 bin\staging\ 待部署**（游戏运行中，关游戏后拷入 Mods\）。
+- **双端均已部署最新**（桥 Mods\ 2:21 版含 adjust_fire；FCS Logic UserData\ 热部署含 AdjustTaskAim）。
 - 最新增量（两端）：**adjust_fire 最后时刻改瞄**——LLM 主动修正已排队/炮上准备中任务的
   瞄准点（按 T 编号），FCS **不等待**（不改就按原瞄点发）：ArtilleryTask.aimAdjusted 标记把
   三段重解门（pre-aim/pre-fire/manual-wait）扩到静态任务，pre-fire 对改瞄任务用 0.03km 细阈值
