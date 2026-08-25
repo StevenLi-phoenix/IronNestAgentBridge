@@ -133,9 +133,10 @@
   常规再部署用——**不会暂停/重置反炮兵倒计时，不是逃生手段**（实测确认）；新炮位=旧炮位+
   方向×距离可推算→直接 set_assumed_turret_position，免 LocationReport）。新弹种（卡面实测）：`LE`（8 点，中等装药小威力，爆半径 150m，精确定位的
   单个小目标省钱选）；`DRIL`（3 点，**训练弹**：混凝土填充无爆炸物，极小有效半径——校射专用，
-  无杀伤不揭雾）；`PHGN`（光气 10 点，damage=1 半径 **620m**——名义每点覆盖全场最高，预计仅对
-  人员有效，待实测）；`TEAR`（催泪 8 点，**damage=0** 半径 750m——面积压制/驱散，非杀伤）。
-  化学弹半径巨大，友军普查自动按实半径拦截。价格每局浮动，读实价。
+  无杀伤不揭雾）；`PHGN`（光气 10 点，damage=1 半径 **620m**，**仅对人员**（实测确认）——
+  人员集群面杀伤性价比之王，对工事/装甲/载具无效）；`TEAR`（催泪 8 点，**damage=0** 半径
+  750m，**使区域内单位显形**（实测确认）——全弹种最大单发揭示范围的侦察弹，常规盲射仍用
+  STAR 省钱）。化学弹半径巨大，友军普查自动按实半径拦截。价格每局浮动，读实价。
 - distanceKm 输入链（MoveDirection 用）：requisition_card.distanceKm → RequestConsoleCard
   7 参重载 → ConsoleCardRequest.DistanceKm → BuyCardById 距离拨盘（DialOdometerPunchcardBridge
   .distanceDial 物理优先，Distance 读回验证，SetDistanceInternal 兜底——与 bearing 同款三段式）。
