@@ -191,17 +191,24 @@ public static class RequisitionOperator
                 yield break;
             }
 
-            var deadline = Time.realtimeSinceStartup + 5f;
+            var deadline = Time.realtimeSinceStartup + 10f;
             while ((!button.isActive || Time.realtimeSinceStartup < button.nextAllowedClickTime)
                    && Time.realtimeSinceStartup < deadline)
                 yield return null;
+
+            // Never press a dead button: it silently buys nothing while we report success.
+            if (!button.isActive || Time.realtimeSinceStartup < button.nextAllowedClickTime)
+            {
+                Finish(cardId, "FAILED: buy button never became active — purchase NOT made, retry later");
+                yield break;
+            }
 
             button.OnClickDown();
             yield return new WaitForSeconds(0.2f);
             button.OnClickUp();
             yield return new WaitForSeconds(2f);
 
-            Finish(cardId, "ok");
+            Finish(cardId, "ok (button pressed while active)");
         }
         finally
         {
