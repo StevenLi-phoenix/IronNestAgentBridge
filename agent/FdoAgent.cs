@@ -16,6 +16,8 @@ public class FdoAgent
 - 战场报告(secondary): 观测员的方位角交汇报告
 - 指挥桌事件(map): 新揭示/移动/受损/摧毁的目标
 - state快照: 所有可见目标的方位角/距离/护甲/免疫弹种、火炮与FCS状态
+- 工具回执尾部可能附带**[随查战场新事件]**: 你调用工具期间新到的事件(弹着、电文、
+  误伤预警等), 同轮立即纳入决策——尤其误伤预警/停火命令要当场adjust_fire或cancel, 不要等下一轮
 所有输入都带**24小时制游戏世界时钟**时间参照(事件的[HH:mm ...]、快照的"@ HH:mm"、
 工具回执的[@HH:mm])——与掩体挂钟/怀表、统帅部电文中的时刻引用同一时钟。这是唯一时间轴:
 判断情报新旧、运动模型的motionAtTime、倒计时推算都以它为准; 对话历史里的旧数据
@@ -508,14 +510,19 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         TransactionLog.Write(type, text, data);
     }
 
+    // Event delivery cursor: everything up to this Seq has been shown to the LLM already —
+    // in a round's context, or piggybacked onto a tool result mid-round. Touched only on
+    // the agent thread (loop + ExecuteTool inside the streaming call).
+    private long _eventCursor;
+
     private void Loop(CancellationToken ct)
     {
-        long since = 0;
+        _eventCursor = 0;
         var idleSlices = 0;
 
         try
         {
-            LoopBody(ct, ref since, ref idleSlices);
+            LoopBody(ct, ref idleSlices);
         }
         finally
         {
@@ -524,7 +531,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         }
     }
 
-    private void LoopBody(CancellationToken ct, ref long since, ref int idleSlices)
+    private void LoopBody(CancellationToken ct, ref int idleSlices)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -545,12 +552,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     Status = "running";
                 }
 
-                var events = EventLog.WaitForEvents(since, PollSliceMs);
+                var events = EventLog.WaitForEvents(_eventCursor, PollSliceMs);
                 if (ct.IsCancellationRequested) break;
 
                 if (events.Count > 0)
                 {
-                    since = events[^1].Seq;
+                    _eventCursor = events[^1].Seq;
                     idleSlices = 0;
 
                     // Debounce: bursts arrive over a second or two (telegraph lines printing,
@@ -560,11 +567,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     var settleDeadline = Environment.TickCount64 + 6_000;
                     while (Environment.TickCount64 < settleDeadline && !ct.IsCancellationRequested)
                     {
-                        var more = EventLog.WaitForEvents(since, 1_000);
+                        var more = EventLog.WaitForEvents(_eventCursor, 1_000);
                         if (more.Count == 0)
                             break;
                         events.AddRange(more);
-                        since = more[^1].Seq;
+                        _eventCursor = more[^1].Seq;
                     }
 
                     // Dedup within the burst: identical type+text repeats add tokens, not intel.
@@ -996,6 +1003,16 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     _recentToolCalls.RemoveRange(0, _recentToolCalls.Count - 20);
             }
             TransactionLog.Write("tool", entry, new { name, args = argsText, result });
+            // Piggyback: events that landed while the round was running (impacts, telegrams,
+            // friendly warnings) ride back on the tool result so the agent reacts in the SAME
+            // round. The cursor advances — the main loop will not deliver these again.
+            var fresh = EventLog.WaitForEvents(_eventCursor, 0);
+            if (fresh.Count > 0)
+            {
+                _eventCursor = fresh[^1].Seq;
+                result += "\n[随查战场新事件]\n" + string.Join("\n", fresh.Select(e =>
+                    $"[{(e.GameTime.Length > 0 ? e.GameTime + " " : "")}{e.Source}/{e.Type}] {e.Text}"));
+            }
             return result;
         }
 

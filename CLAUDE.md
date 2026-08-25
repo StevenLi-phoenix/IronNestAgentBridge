@@ -158,6 +158,9 @@
 - 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
   → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
   购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
+- 事件游标 `_eventCursor`（agent 线程独占）：主循环取事件推进它；**ExecuteTool 出口把
+  工具执行期间新到的事件以"[随查战场新事件]"搭在工具结果尾部**并同步推进游标（主循环不会
+  重发）——agent 同轮就能对误伤预警/弹着反应；自身动作触发的事件也会回声在结果里（无害确认）。
 - 作战模式判别：活动场景名（快照 `SceneName`）——`Mission Chill`/`Mission Challenging`=无尽
   （Gamemodes 枚举同名），`MissionBase`=剧本任务，`Mission tutorial N`=教程；快照文本"作战模式"
   行连同反炮兵含义一起给 agent（无尽=毁炮只延时，剧本=全灭停表）。
