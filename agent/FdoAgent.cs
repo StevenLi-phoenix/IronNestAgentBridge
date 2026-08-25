@@ -380,9 +380,13 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("## 战场状态");
+        // Never print the turret coordinate here — the agent's knowledge of its own
+        // position must come from the wire + its own calibration, or it echoes whatever
+        // value the system shows (observed failure mode). Status only.
         var turretUnplaced = Math.Abs(s.TurretMapX) < 0.01f && Math.Abs(s.TurretMapY) < 0.01f;
-        sb.AppendLine($"炮塔km: ({MapOffsetX + s.TurretMapX * MapLocalToKm:F2}, {MapOffsetY + s.TurretMapY * MapLocalToKm:F2})"
-                      + (turretUnplaced ? "  ⚠棋子在地图原点=尚未校准! 立即按统帅部电文的铁巢网格 set_turret_position, 校准前一切诸元都是错的" : ""));
+        sb.AppendLine(turretUnplaced
+            ? "炮塔棋子: ⚠未校准! 先按统帅部电文的铁巢网格set_turret_position, 校准前实体方位/距离均不可信"
+            : "炮塔棋子: 已校准(如需查询用get_turret_position)");
         sb.AppendLine($"FCS: pending={s.Fcs.PendingCount} done={s.Fcs.CompletedTaskCount} fail={s.Fcs.FailedTaskCount}"
                       + $" | L: {s.Fcs.LeftTask ?? "-"} | R: {s.Fcs.RightTask ?? "-"}");
         if (s.Fcs.PendingTasks.Count > 0)
