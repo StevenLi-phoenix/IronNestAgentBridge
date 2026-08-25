@@ -172,9 +172,9 @@
 - 作战模式判别：活动场景名（快照 `SceneName`）——`Mission Chill`/`Mission Challenging`=无尽
   （Gamemodes 枚举同名），`MissionBase`=剧本任务，`Mission tutorial N`=教程；快照文本"作战模式"
   行连同反炮兵含义一起给 agent（无尽=毁炮只延时，剧本=全灭停表）。
-  **下单预算门**（仅桥侧，FCS 不管账）：QueueFireMission 拒绝 弹价+队列在排任务占款>余额
-  （在排=serial 在 PendingTasks 里的 _deployedTasks，炮位上的视为已扣款）；RequestCard 拒绝
-  卡价>余额。cost 读不到（0）时放行——宁可漏拦不可误拦。
+  **预算门只剩特殊卡**（RequestCard 拒绝卡价>余额；cost 读不到时放行）。**fire 完全不拦**
+  ——有的关卡余额 0 但炮膛已装填（打已装填弹不购买），任何桥侧"买得起吗"猜测都会误拦
+  （按指挥官要求拆除，含队列预留）。
 - **陷阱：`ShellDefinition.ImpactRadius` 单位是 km**（HE=0.25、HCHE=0.55、AP=0.15）。
   曾按米处理导致快照显示"爆半径0m"、友军拦截/覆盖名单形同虚设。
 

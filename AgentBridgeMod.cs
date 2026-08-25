@@ -592,7 +592,8 @@ public class AgentBridgeMod : MelonMod
     public string RequestCard(string cardId, float? bearingDeg, int priority = 50, string? startGrid = null,
         float? distanceKm = null)
     {
-        // Same budget gate as fire missions: refuse an order the balance cannot cover.
+        // Budget gate for special cards only — fire missions are ungated (levels exist with
+        // 0 balance but shells already loaded in the guns; firing those buys nothing).
         if (AmmoReader.ReadRequisitionPoints() is { } balance
             && AmmoReader.ReadCards().FirstOrDefault(
                 c => string.Equals(c.Id, cardId, StringComparison.OrdinalIgnoreCase)) is { Cost: > 0 } cardInfo
@@ -730,24 +731,10 @@ public class AgentBridgeMod : MelonMod
         if (req.DistanceKm is { } dist && dist > maxRange)
             return $"distance {dist:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
 
-        // Budget gate: shells are paid from the requisition balance when FCS loads them. A
-        // mission the balance cannot cover — after the queued-but-unfired missions ahead of
-        // it draw their own cost — would make FCS's buy fail and waste a gun slot.
-        if (AmmoReader.ReadRequisitionPoints() is { } balance)
-        {
-            var cards = AmmoReader.ReadCards();
-            int CostOf(string? shell) => cards.FirstOrDefault(
-                c => string.Equals(c.Id, shell, StringComparison.OrdinalIgnoreCase))?.Cost ?? 0;
-            var cost = CostOf(req.Shell);
-            var pendingSerials = new HashSet<int>();
-            foreach (var t in _fcs.ReadStatus().PendingTasks)
-                if (TaskSerialRe.Match(t ?? "") is { Success: true } m && int.TryParse(m.Groups[1].Value, out var ps))
-                    pendingSerials.Add(ps);
-            var committed = _deployedTasks.Where(kv => pendingSerials.Contains(kv.Key)).Sum(kv => CostOf(kv.Value.Shell));
-            if (cost > 0 && cost + committed > balance)
-                return $"征用点不足: {req.Shell} 需{cost}点, 队列在排任务将先扣{committed}点, 余额仅{balance}点 " +
-                       "— rejected. 等在排任务结清、cancel低价值任务或换便宜弹种";
-        }
+        // No budget gate on fire missions: some levels run a 0-point balance with shells
+        // ALREADY LOADED in the guns (no purchase happens when firing those), and points
+        // replenish over time — any bridge-side affordability guess over-rejects. The agent
+        // sees the live balance in every snapshot; an unaffordable buy just fails on FCS side.
 
         var suffix = SurveyBlast(req.Shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire,
             out var ffRejection, out var hostilesInRadius);
