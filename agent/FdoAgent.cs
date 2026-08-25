@@ -70,6 +70,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 定向移动(MoveDirection卡, 约10点, bearingDeg+distanceKm): 常规再部署——目标超出射程时
   拉近距离、或占领更好阵位。新炮位可推算=旧炮位+方向×距离, 移动完成后直接
   set_assumed_turret_position到推算点, 不用买LocationReport。反炮兵威胁下无逃生价值(见上)。
+- 地图标记体制: **T1/T2由FCS自动控制**——T1恒指左炮当前任务的瞄准点、T2恒指右炮,
+  无任务时归位, 你无法也无需移动它们。**T3及以上是指挥官(玩家)手动放置的标记**,
+  绝不属于你; 快照markers[]里玩家标记的位置可视为人工给出的兴趣点/目标提示。
+  排火力任务不占用任何标记(纯坐标入队)。
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
   未揭示目标只能根据电报情报三角定位后用bearingDeg+distanceKm盲射

@@ -373,7 +373,7 @@ public class AgentBridgeMod : MelonMod
                 LastFcsSummary = $"FCS: pending={s.PendingCount} done={s.CompletedTaskCount} fail={s.FailedTaskCount}" +
                                  (s.LeftTask != null ? $"\nT1(左): {s.LeftTask}" : "") +
                                  (s.RightTask != null ? $"\nT2(右): {s.RightTask}" : "");
-                ReturnFinishedMarkers(s);
+                TrackFiredShells(s);
 
                 var cardResult = _fcs.ReadConsoleCardResult();
                 if (!string.IsNullOrEmpty(cardResult) && cardResult != _lastCardResult)
@@ -387,30 +387,28 @@ public class AgentBridgeMod : MelonMod
         }
     }
 
-    // marker id -> the mission its current deployment covers (label + shell + aim point)
-    private readonly Dictionary<int, InFlightShell> _deployedMarkers = new();
+    // task serial (#N) -> the mission it covers (label + shell + aim point). No physical
+    // marker involved: map tokens belong to the player (T3+) and FCS's gun indicators (T1/T2).
+    private readonly Dictionary<int, InFlightShell> _deployedTasks = new();
     private static readonly System.Text.RegularExpressions.Regex TaskSerialRe =
         new(@"^#(\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    /// <summary>Park markers back at their home spot once no FCS task references them anymore.</summary>
-    private void ReturnFinishedMarkers(FcsStatusDto status)
+    /// <summary>A bookkept task that vanished from the live FCS set has fired (or was cleared) — move it to in-flight.</summary>
+    private void TrackFiredShells(FcsStatusDto status)
     {
-        if (_deployedMarkers.Count == 0 || !_map.IsBound)
+        if (_deployedTasks.Count == 0)
             return;
 
-        // Live marker refs come structured from the gateway (serial -> marker id); the
-        // display strings only carry #N and are never parsed for ids.
-        var inUse = new HashSet<int>(status.SerialToMarker.Values);
+        // Live serial set comes structured from the gateway; display strings are never parsed.
+        var live = status.SerialToMarker;
 
-        foreach (var id in _deployedMarkers.Keys.Where(id => !inUse.Contains(id)).ToList())
+        foreach (var serial in _deployedTasks.Keys.Where(s => !live.ContainsKey(s)).ToList())
         {
-            if (!_map.ReturnMarkerHome(id))
-                continue;
             // The task left pending and both gun slots: the shell is in the air (or the task
             // was cancelled — rare, agent-initiated, self-corrects on timeout). Track it so
             // the agent doesn't re-queue a target whose shell is still flying.
-            var dep = _deployedMarkers[id];
-            _deployedMarkers.Remove(id);
+            var dep = _deployedTasks[serial];
+            _deployedTasks.Remove(serial);
             _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup, FiredAtGame = EventLog.GameClock });
             EventLog.Append("shell_fired", "fcs",
                 $"炮弹出膛: {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
@@ -418,13 +416,12 @@ public class AgentBridgeMod : MelonMod
     }
 
     /// <summary>Append the covered target's label to FCS task strings so the agent can correlate.</summary>
-    private string? AnnotateTask(string? desc, Dictionary<int, int> serialToMarker)
+    private string? AnnotateTask(string? desc)
     {
         if (desc == null) return null;
         var m = TaskSerialRe.Match(desc);
         if (m.Success && int.TryParse(m.Groups[1].Value, out var serial)
-            && serialToMarker.TryGetValue(serial, out var markerId)
-            && _deployedMarkers.TryGetValue(markerId, out var dep))
+            && _deployedTasks.TryGetValue(serial, out var dep))
             return $"{desc} → {dep.Label}";
         return desc;
     }
@@ -450,7 +447,7 @@ public class AgentBridgeMod : MelonMod
         _agent?.ClearLog();
         EventLog.Clear(); // stale events must not replay into the restarted agent's fresh context
         _lastCardResult = "";
-        _deployedMarkers.Clear();
+        _deployedTasks.Clear();
         _inFlight.Clear();
         _map.Unbind();
         Agent.GridMath.ResetMapBounds();
@@ -481,9 +478,9 @@ public class AgentBridgeMod : MelonMod
         snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
         var cardIds = new HashSet<string>(snapshot.AvailableShells, StringComparer.OrdinalIgnoreCase);
         snapshot.ShellSpecs = AmmoReader.ReadShellSpecs().Where(s => cardIds.Contains(s.Id)).ToList();
-        snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask, snapshot.Fcs.SerialToMarker);
-        snapshot.Fcs.RightTask = AnnotateTask(snapshot.Fcs.RightTask, snapshot.Fcs.SerialToMarker);
-        snapshot.Fcs.PendingTasks = snapshot.Fcs.PendingTasks.Select(t => AnnotateTask(t, snapshot.Fcs.SerialToMarker)!).ToList();
+        snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);
+        snapshot.Fcs.RightTask = AnnotateTask(snapshot.Fcs.RightTask);
+        snapshot.Fcs.PendingTasks = snapshot.Fcs.PendingTasks.Select(t => AnnotateTask(t)!).ToList();
         snapshot.InFlightShells = DescribeInFlight();
         if (_map.IsBound)
         {
@@ -496,20 +493,6 @@ public class AgentBridgeMod : MelonMod
             snapshot.Markers = _map.ReadMarkers();
         }
         return snapshot;
-    }
-
-    private int _markerCursor;
-
-    /// <summary>
-    /// Round-robin over the map's marker tokens. Every queued mission moves a marker onto
-    /// its aim point — cosmetic feedback so the player sees the agent's intent on the
-    /// command table, exactly like a human dragging a red marker before pressing T.
-    /// </summary>
-    private int NextMarkerId()
-    {
-        var ids = _map.MarkerIds.OrderBy(i => i).ToList();
-        if (ids.Count == 0) return -1;
-        return ids[_markerCursor++ % ids.Count];
     }
 
     /// <summary>Card purchase: DTO into FCS's coordinator when available, legacy physical path otherwise.</summary>
@@ -678,39 +661,27 @@ public class AgentBridgeMod : MelonMod
                 MathF.Sin(rad) * speedLocalPerSec, MathF.Cos(rad) * speedLocalPerSec, t0);
         }
 
-        var markerId = NextMarkerId();
-        if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))
-        {
-            var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority, req.EntityId, motion);
-            if (result == "ok")
-            {
-                _deployedMarkers[markerId] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f);
-                EventLog.Append("fcs_task_update", "fcs",
-                    $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as marker {markerId}");
-                return "ok" + suffix;
-            }
-            return result;
-        }
-
-        // No marker available — fall back to direct injection, display-only loss.
-        // Solution re-derived from the FINAL aim point so an offset survives this path too.
-        if (req.BearingDeg is float && req.DistanceKm is float)
+        // Pure aim-point enqueue: no physical marker is touched — the map tokens belong to
+        // the player (T3+) and to FCS's own gun indicators (T1/T2). The task is late-bound
+        // via aimLocal; initial bearing/distance derive from the final aim vs the piece.
         {
             var turretLocal = _map.TurretLocalOnMap();
             var ddx = mapX - turretLocal.x;
             var ddy = mapY - turretLocal.y;
-            var b2 = (MathF.Atan2(ddx, ddy) * 57.29578f % 360f + 360f) % 360f;
-            var d2 = MathF.Sqrt(ddx * ddx + ddy * ddy) * 3.8164f;
-            var result = _fcs.EnqueueByBearing(b2, d2, req.Shell, 0, req.Priority);
+            var brg = (MathF.Atan2(ddx, ddy) * 57.29578f % 360f + 360f) % 360f;
+            var distKm = MathF.Sqrt(ddx * ddx + ddy * ddy) * 3.8164f;
+            var result = _fcs.EnqueueAimPoint(mapX, mapY, brg, distKm, req.Shell, req.Priority,
+                out var serial, req.EntityId, motion);
             if (result == "ok")
             {
+                if (serial > 0)
+                    _deployedTasks[serial] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f);
                 EventLog.Append("fcs_task_update", "fcs",
-                    $"fire mission queued at {label} ({req.Shell}), no marker available");
-                return "ok" + suffix;
+                    $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as #{serial}");
+                return $"ok (#{serial}){suffix}";
             }
             return result;
         }
-        return "no map marker available for entity targeting";
     }
 
     /// <summary>
@@ -819,20 +790,19 @@ public class AgentBridgeMod : MelonMod
             return $"new aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected";
 
         // Same friendly-fire discipline as fire: the re-aimed burst is surveyed with the
-        // task's own shell; the internal marker id rides along for bookkeeping.
-        var known = _fcs.TryGetTaskInfo(req.Serial, out var shell, out var markerId);
+        // task's own shell (looked up from the live FCS set by serial).
+        _fcs.TryGetTaskInfo(req.Serial, out var shell, out _);
         var suffix = SurveyBlast(shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire, out var ffRejection);
         if (ffRejection != null)
             return ffRejection;
 
         var result = _fcs.AdjustTaskAim(req.Serial, mapX, mapY);
-        if (result.StartsWith("ok") && known && markerId >= 0)
+        if (result.StartsWith("ok"))
         {
-            // Cosmetic + bookkeeping: keep the physical marker and the impact-matching aim
-            // point on the new coordinates.
-            _map.TryMoveMarker(markerId, mapX, mapY);
-            if (_deployedMarkers.TryGetValue(markerId, out var deployed))
-                _deployedMarkers[markerId] = deployed with { Label = label, KmX = kmXCheck, KmY = kmYCheck };
+            // Keep the impact-matching aim point current; no physical marker is involved
+            // (T1/T2 follow automatically via the FCS gun-marker loop).
+            if (_deployedTasks.TryGetValue(req.Serial, out var deployed))
+                _deployedTasks[req.Serial] = deployed with { Label = label, KmX = kmXCheck, KmY = kmYCheck };
             EventLog.Append("fcs_task_update", "fcs", $"#{req.Serial} 瞄准点已调整 → {label}");
         }
         return result + suffix;

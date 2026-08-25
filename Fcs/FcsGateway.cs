@@ -343,6 +343,54 @@ public class FcsGateway
         catch { }
     }
 
+    /// <summary>
+    /// Enqueue by pure aim point (map-local) — no physical marker involved. The task is
+    /// late-bound (hasAimPoint/aimLocal): FCS re-derives the solution every planning round,
+    /// exactly like a marker task, but the map tokens stay where the player put them.
+    /// Returns the FCS-assigned unique serial (#N) on success, -1 otherwise.
+    /// </summary>
+    public string EnqueueAimPoint(float localX, float localY, float bearingDeg, float distanceKm,
+        string shell, int priority, out int serial, string? trackEntityId = null, MotionSpec? motion = null)
+    {
+        serial = -1;
+        var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
+        if (fsc == null)
+            return !modPresent ? "IronNestFCS Smart mod not present"
+                 : !logicLoaded ? "FCS Logic not loaded (scene not bound yet?)"
+                 : "FCS instance unavailable";
+
+        var logicAsm = fsc.GetType().Assembly;
+        var taskType = logicAsm.GetType("IronNestFCS.Logic.FCS.ArtilleryTask");
+        var bulletType = logicAsm.GetType("IronNestFCS.Logic.FCS.BulletType");
+        if (taskType == null || bulletType == null)
+            return "FCS internal types not found (incompatible FCS version?)";
+        if (taskType.GetField("hasAimPoint") == null)
+            return "FCS build lacks aim-point tasks — update the FCS fork";
+
+        object bullet;
+        try { bullet = Enum.Parse(bulletType, shell, ignoreCase: true); }
+        catch { return $"unknown shell type '{shell}'"; }
+
+        var task = Activator.CreateInstance(taskType)!;
+        taskType.GetField("targetId")!.SetValue(task, 0);
+        taskType.GetField("angel")!.SetValue(task, bearingDeg);
+        taskType.GetField("distance")!.SetValue(task, distanceKm);
+        taskType.GetField("position")!.SetValue(task,
+            new Vector3(10.016f + localX * 3.8164f, 5.235f + localY * 3.8164f, 0f));
+        taskType.GetField("bulletType")!.SetValue(task, bullet);
+        taskType.GetField("hasAimPoint")!.SetValue(task, true);
+        taskType.GetField("aimLocal")!.SetValue(task, new Vector3(localX, localY, 0f));
+        TrySetPriority(task, priority);
+        TrySetMotion(task, trackEntityId, motion);
+
+        var enqueue = fsc.GetType().GetMethod("EnqueueTask", AnyInstance);
+        if (enqueue == null)
+            return "FSC.EnqueueTask not found";
+        enqueue.Invoke(fsc, new[] { task });
+        try { serial = taskType.GetField("serial")?.GetValue(task) as int? ?? -1; } catch { }
+        return "ok";
+    }
+
     public string EnqueueFromMarker(int markerId, string shell, int priority = 50,
         string? trackEntityId = null, MotionSpec? motion = null)
     {
