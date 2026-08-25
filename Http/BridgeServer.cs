@@ -133,6 +133,14 @@ public class BridgeServer
                 TryWrite(ctx, 200, new { result });
                 break;
             }
+            case ("GET", "/find"):
+            {
+                var q = ctx.Request.QueryString["q"] ?? "";
+                if (q.Length < 3) { TryWrite(ctx, 400, new { error = "need ?q=<name substring, >=3 chars>" }); break; }
+                var result = MainThread.Run(() => GameState.SceneFinder.Find(q)).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, result);
+                break;
+            }
             case ("GET", "/console"):
             {
                 var info = MainThread.Run(() => GameState.RequisitionOperator.InspectConsole()).GetAwaiter().GetResult();
