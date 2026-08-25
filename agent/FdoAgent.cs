@@ -624,7 +624,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     {
         ("敌人如潮", "敌军全部从北方进入——预警/侦察资源一律朝北配置, 火力预案默认朝北。" +
                     "本图侦察是自动的, **严禁购买ScoutPlane**(纯浪费); " +
-                    "侦察动作只需两样: 北面部署FO观测员(Spotter)+对北面可疑区打STAR照明。"),
+                    "侦察动作只需一样: 等待无线电说有敌人，然后对北面可疑区打STAR照明。"),
     };
 
     private string BuildCompactState(StateSnapshotDto s)
