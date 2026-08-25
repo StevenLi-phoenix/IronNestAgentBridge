@@ -89,6 +89,18 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {
     "type": "function",
     "function": {
+      "name": "set_turret_position",
+      "description": "在指挥桌上放置/移动'声明炮塔位置'实体标记(青色方块)。FCS与所有解算实时以该标记为射击原点。任务开始时统帅部电文给出铁巢网格、或阵地转移(电报宣告'已转移至[GRID]')后, 必须用本工具校准, 否则诸元全错。",
+      "parameters": {
+        "type": "object",
+        "properties": { "position": { "type": "string", "description": "网格如'H2 3:4'或km坐标'7.35,1.45'" } },
+        "required": ["position"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "requisition_card",
       "description": "在征用台上插入指定打孔卡、设置卡片旋钮、按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(如ScoutPlane)给bearingDeg指定侦查方向, 飞机沿该方向揭开侦查条带; 距离/起始位置游戏不可选, 无此参数。特殊卡价格见清单, 侦察机很贵, 只在情报价值明确时使用。",
       "parameters": {
@@ -393,6 +405,16 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 new UnityEngine.Vector2((float)s.x, (float)s.y));
     }
 
+    private string ExecuteSetTurret(JsonElement args, (double x, double y) turretKm)
+    {
+        var pos = args.TryGetProperty("position", out var p) ? p.GetString() ?? "" : "";
+        if (GridMath.ParsePoint(pos, turretKm) is not { } km)
+            return JsonSerializer.Serialize(new { error = $"cannot parse position '{pos}' (grid like 'H2 3:4' or 'kmX,kmY')" });
+        var result = MainThread.Run(() => _mod.SetDeclaredTurret((float)km.x, (float)km.y), 15_000).GetAwaiter().GetResult();
+        AppendLog($"turret declared at km({km.x:F2},{km.y:F2})", "turret", new { km.x, km.y });
+        return JsonSerializer.Serialize(new { result });
+    }
+
     private string ExecuteRequisition(JsonElement args, StateSnapshotDto snapshot)
     {
         var cardId = args.TryGetProperty("cardId", out var c) ? c.GetString() ?? "" : "";
@@ -435,6 +457,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "grid_to_km" => GridMath.GridToKm(args, turretKm),
                 "solve_target" => SolveAndPlot(args),
                 "requisition_card" => ExecuteRequisition(args, snapshot),
+                "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 _ => JsonSerializer.Serialize(new { error = $"unknown tool '{name}'" }),
             };
             var argsText = args.GetRawText();

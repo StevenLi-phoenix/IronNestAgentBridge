@@ -115,6 +115,14 @@ public class BridgeServer
                 TryWrite(ctx, 200, new { result });
                 break;
             }
+            case ("POST", "/turret"):
+            {
+                var req = ReadBody<TurretRequest>(ctx);
+                if (req == null) { TryWrite(ctx, 400, new { error = "need {kmX, kmY}" }); break; }
+                var result = MainThread.Run(() => _mod.SetDeclaredTurret(req.KmX, req.KmY)).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, new { result });
+                break;
+            }
             case ("POST", "/requisition"):
             {
                 var req = ReadBody<RequisitionRequest>(ctx);
@@ -170,6 +178,12 @@ public class BridgeServer
     {
         public string? Which { get; set; }
         public string[]? Lines { get; set; }
+    }
+
+    private class TurretRequest
+    {
+        public float KmX { get; set; }
+        public float KmY { get; set; }
     }
 
     private class RequisitionRequest

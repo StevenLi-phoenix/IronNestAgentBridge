@@ -33,6 +33,7 @@ public class MapReader
         _fireMissionRoot = null;
         _markers.Clear();
         _markerHomes.Clear();
+        _declaredTurretToken = null;
         _previous = new Dictionary<string, MapEntityDto>();
     }
 
@@ -65,6 +66,10 @@ public class MapReader
 
     public Vector3 TurretLocalOnMap()
     {
+        if (_mapSurface != null && _declaredTurretToken == null)
+            _declaredTurretToken = _mapSurface.Find(DeclaredTurretTokenName);
+        if (_declaredTurretToken != null)
+            return _declaredTurretToken.localPosition;
         if (_mapSurface == null || _turretLocation == null)
             return Vector3.zero;
         return _mapSurface.InverseTransformPoint(_turretLocation.position);
@@ -117,6 +122,48 @@ public class MapReader
     }
 
     /// <summary>Visible entities only — fire missions must not target fog-of-war contacts.</summary>
+    public const string DeclaredTurretTokenName = "MapToken_TurretDeclared";
+    private Transform? _declaredTurretToken;
+
+    /// <summary>
+    /// Create or move the physical commander-declared turret token on the table. Both our
+    /// solvers and the patched FCS read its live localPosition as the firing origin.
+    /// </summary>
+    public string SetDeclaredTurret(float kmX, float kmY)
+    {
+        if (_mapSurface == null)
+            return "map not bound";
+
+        if (_declaredTurretToken == null)
+        {
+            _declaredTurretToken = _mapSurface.Find(DeclaredTurretTokenName);
+            if (_declaredTurretToken == null)
+            {
+                var token = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                token.name = DeclaredTurretTokenName;
+                token.transform.SetParent(_mapSurface, false);
+                token.transform.localScale = Vector3.one * 0.04f;
+                var renderer = token.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Universal Render Pipeline/Lit");
+                    if (shader != null)
+                    {
+                        var mat = new Material(shader) { color = Color.cyan };
+                        if (mat.HasProperty("_BaseColor"))
+                            mat.SetColor("_BaseColor", Color.cyan);
+                        renderer.material = mat;
+                    }
+                }
+                _declaredTurretToken = token.transform;
+            }
+        }
+
+        var z = _markerHomes.Count > 0 ? _markerHomes.Values.First().z : -0.02f;
+        _declaredTurretToken.localPosition = new Vector3((kmX - 10.016f) / MapLocalToKm, (kmY - 5.235f) / MapLocalToKm, z);
+        return $"declared turret token at km({kmX:F2},{kmY:F2}); FCS and solvers now use it as origin";
+    }
+
     public bool ReturnMarkerHome(int id)
     {
         if (!_markers.TryGetValue(id, out var tr) || tr == null || !_markerHomes.TryGetValue(id, out var home))

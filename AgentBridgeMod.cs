@@ -287,6 +287,13 @@ public class AgentBridgeMod : MelonMod
         return ids[_markerCursor++ % ids.Count];
     }
 
+    public string SetDeclaredTurret(float kmX, float kmY)
+    {
+        var result = _map.SetDeclaredTurret(kmX, kmY);
+        EventLog.Append("turret_position", "map", result);
+        return result;
+    }
+
     public string QueueFireMission(FireMissionRequest req)
     {
         if (!_map.IsBound)
