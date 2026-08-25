@@ -453,7 +453,16 @@ public class AgentBridgeMod : MelonMod
         var kmXCheck = 10.016f + mapX * 3.8164f;
         var kmYCheck = 5.235f + mapY * 3.8164f;
         if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
-            return $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected (bad solution?)";
+        {
+            var tl = _map.TurretLocalOnMap();
+            var turretOob = !Agent.GridMath.InMapBounds((10.016f + tl.x * 3.8164f, 5.235f + tl.y * 3.8164f));
+            return turretOob
+                ? "aim point is outside the map AND the assumed turret position is itself out of bounds (unreliable) — " +
+                  "recalibrate with set_turret_position from wire/report information first, then re-fire"
+                : $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected. " +
+                  "Check the fire params (target/bearingDeg/distanceKm) for errors; if they look correct, " +
+                  "verify the assumed turret position (get_assumed_turret_position) is calibrated right";
+        }
         var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, req.Shell, StringComparison.OrdinalIgnoreCase));
         var maxRange = spec?.ChargeRanges.Count > 0 ? spec.ChargeRanges.Max(c => c.MaxKm) : 40f;
         if (req.DistanceKm is { } dist && dist > maxRange)
