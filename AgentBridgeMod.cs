@@ -417,6 +417,7 @@ public class AgentBridgeMod : MelonMod
 
         float mapX, mapY;
         string label;
+        var aimDerivedFromTurret = false;
 
         if (!string.IsNullOrEmpty(req.EntityId))
         {
@@ -443,6 +444,7 @@ public class AgentBridgeMod : MelonMod
             mapX = local.x;
             mapY = local.y;
             label = $"bearing {bearing:F1}°, {distance:F2} km";
+            aimDerivedFromTurret = true;
         }
         else
         {
@@ -454,14 +456,15 @@ public class AgentBridgeMod : MelonMod
         var kmYCheck = 5.235f + mapY * 3.8164f;
         if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
         {
-            var tl = _map.TurretLocalOnMap();
-            var turretOob = !Agent.GridMath.InMapBounds((10.016f + tl.x * 3.8164f, 5.235f + tl.y * 3.8164f));
-            return turretOob
-                ? "aim point is outside the map AND the assumed turret position is itself out of bounds (unreliable) — " +
-                  "recalibrate with set_turret_position from wire/report information first, then re-fire"
-                : $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected. " +
-                  "Check the fire params (target/bearingDeg/distanceKm) for errors; if they look correct, " +
-                  "verify the assumed turret position (get_assumed_turret_position) is calibrated right";
+            // target/entityId aims are absolute coordinates — the turret never enters the
+            // math, so OOB means bad params. Only bearing/distance aims derive from the
+            // assumed turret origin, where an off/OOB origin can also be the cause.
+            return aimDerivedFromTurret
+                ? $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected. " +
+                  "This aim derives from the ASSUMED turret position + bearing/distance: either the params are wrong, " +
+                  "or the assumed turret position is off/OOB — check get_assumed_turret_position and recalibrate if unreliable"
+                : $"target coordinates km({kmXCheck:F1},{kmYCheck:F1}) are outside the map — rejected. " +
+                  "Bad fire params (grid/km parse or triangulation error); the turret position is irrelevant to this path";
         }
         var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, req.Shell, StringComparison.OrdinalIgnoreCase));
         var maxRange = spec?.ChargeRanges.Count > 0 ? spec.ChargeRanges.Max(c => c.MaxKm) : 40f;
