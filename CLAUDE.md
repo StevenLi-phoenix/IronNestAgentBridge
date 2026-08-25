@@ -11,6 +11,8 @@
 - 游戏开着时只能 `-p:OutputPath=bin\staging\` 构建暂存，关游戏后拷入 `Mods\`。
 - FCS Logic 是热重载的：改 `IronNestFCS.Logic` 后落盘到 `UserData\IronNestFCS\` 即时生效（等价 F9）。
 - 配置在 `UserData\MelonPreferences.cfg` `[AgentBridge]`（ApiKey/模型/价格/开关）。
+  **陷阱：绝不在游戏运行中手改 cfg**——游戏按内存值整文件重写（任何一次 Save 触发），
+  手改必被清。运行中改开关用热键/面板（F11 LLM、F12 优先队列），其余等关游戏再改文件。
 
 ## 逆向工程结论（均实测验证）
 

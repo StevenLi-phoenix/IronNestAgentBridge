@@ -169,7 +169,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 
     public FdoAgent(AgentBridgeMod mod) => _mod = mod;
 
+    public enum AgentState { Stopped, Running, Paused, Stopping }
+
     public bool IsRunning => _thread is { IsAlive: true };
+    public AgentState State { get; private set; } = AgentState.Stopped;
     public string Status { get; private set; } = "stopped";
     public string LastReason { get; private set; } = "";
 
@@ -201,6 +204,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         _carrySummary = "";
         _thread = new Thread(() => Loop(_cts.Token)) { IsBackground = true, Name = "AgentBridge-FDO" };
         _thread.Start();
+        State = AgentState.Running;
         Status = "running";
         AppendLog("agent started");
     }
@@ -208,8 +212,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     public void Stop()
     {
         _cts?.Cancel();
-        Status = "stopped";
-        AppendLog("agent stopped");
+        // The loop thread may still be mid-LLM-round; it flips to Stopped on exit.
+        State = IsRunning ? AgentState.Stopping : AgentState.Stopped;
+        Status = IsRunning ? "stopping (finishing current round)" : "stopped";
+        AppendLog("agent stop requested");
     }
 
     public void ClearLog()
@@ -233,6 +239,19 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         long since = 0;
         var idleSlices = 0;
 
+        try
+        {
+            LoopBody(ct, ref since, ref idleSlices);
+        }
+        finally
+        {
+            State = AgentState.Stopped;
+            Status = "stopped";
+        }
+    }
+
+    private void LoopBody(CancellationToken ct, ref long since, ref int idleSlices)
+    {
         while (!ct.IsCancellationRequested)
         {
             try
@@ -241,12 +260,16 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 // is in the background; FCS pauses its automation there anyway.
                 if (!AgentBridgeMod.GameFocused)
                 {
+                    State = AgentState.Paused;
                     Status = "paused (game unfocused)";
                     if (ct.WaitHandle.WaitOne(1_000)) break;
                     continue;
                 }
-                if (Status == "paused (game unfocused)")
+                if (State == AgentState.Paused)
+                {
+                    State = AgentState.Running;
                     Status = "running";
+                }
 
                 var events = EventLog.WaitForEvents(since, PollSliceMs);
                 if (ct.IsCancellationRequested) break;

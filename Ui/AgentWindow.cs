@@ -59,10 +59,17 @@ public class AgentWindow
         void Add(string text, Color? color = null) => lines.Add((text, color));
 
         var running = agent.IsRunning;
-        Add((running ? "● RUNNING" : "● STOPPED")
+        var (stateText, stateColor) = agent.State switch
+        {
+            FdoAgent.AgentState.Running => ("● RUNNING", Color.green),
+            FdoAgent.AgentState.Paused => ("● PAUSED", Color.yellow),
+            FdoAgent.AgentState.Stopping => ("● STOPPING", new Color(1f, 0.55f, 0f)),
+            _ => ("● STOPPED", Color.red),
+        };
+        Add(stateText
             + $"  {AgentConfig.Model}  staged:{mod.MissionQueue.Count}"
             + $"  PQ:{(AgentConfig.PriorityQueue ? "开" : "关")}",
-            running ? Color.green : Color.red);
+            stateColor);
         Add($"状态: {agent.Status}");
         Add(UsageMeter.Summary);
         Add($"context: {UsageMeter.LastPromptTokens:N0} tokens");
