@@ -502,6 +502,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         // position must come from the wire + its own calibration, or it echoes whatever
         // value the system shows (observed failure mode). Calibration is tracked as an
         // ACT this mission (tool call or detected manual drag), not inferred from position.
+        if (!string.IsNullOrEmpty(s.MapExtentKm))
+            sb.AppendLine($"本关地图实测范围: {s.MapExtentKm} — 瞄准点出界会被fire拒绝; 规划盲射/侦察航线前先对照此范围");
         sb.AppendLine(s.TurretCalibrated
             ? "炮塔棋子: 已校准(如需查询假定位置用get_assumed_turret_position)"
             : "炮塔棋子: ⚠本局尚未校准! 出生默认位置不可信, 校准前实体方位/距离均不可信。"

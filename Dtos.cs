@@ -93,6 +93,9 @@ public class StateSnapshotDto
     // Shells fired but not yet landed: gone from the FCS queue and the gun slots, yet their
     // targets are already served — re-queuing them double-spends ammunition.
     public List<string> InFlightShells { get; set; } = new();
+    // Real measured extent of this mission's map ("km(0.0,0.0)-(20.0,10.5)"); firing
+    // outside it is rejected and any theoretical impact out there is wasted.
+    public string? MapExtentKm { get; set; }
 }
 
 public class ShellSpecDto

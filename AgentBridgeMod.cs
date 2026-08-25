@@ -286,6 +286,7 @@ public class AgentBridgeMod : MelonMod
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
         _map.Unbind();
+        Agent.GridMath.ResetMapBounds();
         _telegraph.Reset();
         _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + BindRetrySeconds;
     }
@@ -301,7 +302,19 @@ public class AgentBridgeMod : MelonMod
         {
             _nextBindAttempt = now + BindRetrySeconds;
             if (_map.TryBind())
-                MelonLogger.Msg("[AgentBridge] tactical map bound");
+            {
+                // Per-mission firing envelope: the real map sheet size, not the A..Z guess.
+                if (_map.KmBounds is { } kb)
+                {
+                    Agent.GridMath.SetMapBoundsKm(kb.MinX, kb.MinY, kb.MaxX, kb.MaxY);
+                    MelonLogger.Msg($"[AgentBridge] tactical map bound; sheet extent km({kb.MinX:F1},{kb.MinY:F1})-({kb.MaxX:F1},{kb.MaxY:F1})");
+                }
+                else
+                {
+                    Agent.GridMath.ResetMapBounds();
+                    MelonLogger.Msg("[AgentBridge] tactical map bound; sheet unmeasured — generous bounds fallback");
+                }
+            }
         }
 
         if (_map.IsBound && now >= _nextMapPoll)
@@ -440,6 +453,7 @@ public class AgentBridgeMod : MelonMod
         _deployedMarkers.Clear();
         _inFlight.Clear();
         _map.Unbind();
+        Agent.GridMath.ResetMapBounds();
         _impacts.Reset();
         _telegraph.Reset();
         _baselineCamera = null;
@@ -473,6 +487,7 @@ public class AgentBridgeMod : MelonMod
         snapshot.InFlightShells = DescribeInFlight();
         if (_map.IsBound)
         {
+            snapshot.MapExtentKm = Agent.GridMath.MapBoundsText;
             var turretLocal = _map.TurretLocalOnMap();
             snapshot.TurretMapX = turretLocal.x;
             snapshot.TurretMapY = turretLocal.y;

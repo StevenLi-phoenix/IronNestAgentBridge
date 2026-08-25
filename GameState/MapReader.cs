@@ -27,9 +27,18 @@ public class MapReader
 
     public Transform? MapSurface => _mapSurface;
 
+    /// <summary>
+    /// Real km extent of THIS mission's map, measured from the physical map sheet at bind.
+    /// Null when no plausible sheet renderer was found (callers fall back to the generous
+    /// global envelope). Missions have different sheet sizes — the hardcoded A..Z envelope
+    /// let blind fire sail kilometres past a small map's edge.
+    /// </summary>
+    public (float MinX, float MinY, float MaxX, float MaxY)? KmBounds { get; private set; }
+
     public void Unbind()
     {
         IsBound = false;
+        KmBounds = null;
         _turretLocation = null;
         _mapSurface = null;
         _fireMissionRoot = null;
@@ -61,8 +70,64 @@ public class MapReader
             }
         }
 
+        KmBounds = MeasureKmBounds(_mapSurface);
         IsBound = true;
         return true;
+    }
+
+    /// <summary>
+    /// Measure the map sheet: largest-area renderer under the surface, world AABB corners
+    /// inverse-transformed into surface-local space, converted to km. Sanity-gated so a
+    /// mis-picked prop can never shrink or explode the firing envelope.
+    /// </summary>
+    private static (float, float, float, float)? MeasureKmBounds(Transform surface)
+    {
+        Renderer? sheet = null;
+        var sheetArea = 0f;
+        var sheetMin = Vector2.zero;
+        var sheetMax = Vector2.zero;
+
+        foreach (var renderer in surface.GetComponentsInChildren<Renderer>())
+        {
+            var b = renderer.bounds;
+            var min = new Vector2(float.MaxValue, float.MaxValue);
+            var max = new Vector2(float.MinValue, float.MinValue);
+            for (var i = 0; i < 8; i++)
+            {
+                var corner = new Vector3(
+                    (i & 1) == 0 ? b.min.x : b.max.x,
+                    (i & 2) == 0 ? b.min.y : b.max.y,
+                    (i & 4) == 0 ? b.min.z : b.max.z);
+                var local = surface.InverseTransformPoint(corner);
+                min = Vector2.Min(min, new Vector2(local.x, local.y));
+                max = Vector2.Max(max, new Vector2(local.x, local.y));
+            }
+            var area = (max.x - min.x) * (max.y - min.y);
+            if (area > sheetArea)
+            {
+                sheetArea = area;
+                sheet = renderer;
+                sheetMin = min;
+                sheetMax = max;
+            }
+        }
+
+        if (sheet == null)
+            return null;
+
+        var minKmX = 10.016f + sheetMin.x * MapLocalToKm;
+        var minKmY = 5.235f + sheetMin.y * MapLocalToKm;
+        var maxKmX = 10.016f + sheetMax.x * MapLocalToKm;
+        var maxKmY = 5.235f + sheetMax.y * MapLocalToKm;
+        var width = maxKmX - minKmX;
+        var height = maxKmY - minKmY;
+        if (width is < 5f or > 40f || height is < 3f or > 30f)
+        {
+            MelonLogger.Warning(
+                $"[AgentBridge] map sheet measurement implausible ({width:F1}x{height:F1}km via '{sheet.gameObject.name}') — keeping generous bounds");
+            return null;
+        }
+        return (minKmX, minKmY, maxKmX, maxKmY);
     }
 
     public const string PlayerTurretPieceName = "Player Turret Piece";

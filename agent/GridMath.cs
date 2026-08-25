@@ -155,9 +155,38 @@ public static class GridMath
         return Result(target, turretKm);
     }
 
-    // Generous tactical-map envelope (grid A..Z columns, rows into the teens).
+    // Per-mission map bounds, measured from the physical map sheet at bind (with a small
+    // edge margin). Until a mission is measured, a generous global envelope applies —
+    // that fallback once let blind fire pass 7km beyond a small map's real edge.
+    private const double EdgeMarginKm = 0.3;
+    private static double _minX = -1, _minY = -1, _maxX = 27, _maxY = 16;
+    private static bool _measured;
+
+    public static void SetMapBoundsKm(double minX, double minY, double maxX, double maxY)
+    {
+        _minX = minX;
+        _minY = minY;
+        _maxX = maxX;
+        _maxY = maxY;
+        _measured = true;
+    }
+
+    public static void ResetMapBounds()
+    {
+        _minX = -1;
+        _minY = -1;
+        _maxX = 27;
+        _maxY = 16;
+        _measured = false;
+    }
+
+    public static string MapBoundsText => _measured
+        ? $"km({_minX:F1},{_minY:F1})-({_maxX:F1},{_maxY:F1})"
+        : "未实测(宽松包络)";
+
     public static bool InMapBounds((double x, double y) p)
-        => p.x is >= -1 and <= 27 && p.y is >= -1 and <= 16;
+        => p.x >= _minX - EdgeMarginKm && p.x <= _maxX + EdgeMarginKm
+        && p.y >= _minY - EdgeMarginKm && p.y <= _maxY + EdgeMarginKm;
 
     private static (double x, double y) Offset((double x, double y) p, double bearingDeg, double distanceKm)
     {
