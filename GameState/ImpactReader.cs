@@ -12,16 +12,23 @@ namespace IronNestAgentBridge.GameState;
 public class ImpactReader
 {
     private readonly Dictionary<int, Vector3> _lastImpactLocal = new();
+    private readonly Dictionary<int, int> _lastInstanceIds = new();
     private readonly HashSet<int> _reportedCorrections = new();
 
     public void Reset()
     {
         _lastImpactLocal.Clear();
+        _lastInstanceIds.Clear();
         _reportedCorrections.Clear();
     }
 
-    /// <summary>Poll impact markers; emit an event for each new/moved impact.</summary>
-    public void PollAndEmitEvents(Transform? mapSurface, Action<float, float>? onImpact = null)
+    /// <summary>
+    /// Poll impact markers; emit an event for each new impact. "New" = the marker moved OR
+    /// the marker instance changed (a repeat shot on the same spot re-spawns/re-binds the
+    /// marker without moving it). The resolver callback settles the matching in-flight
+    /// shell and returns its identity (#N) so the event names what just landed.
+    /// </summary>
+    public void PollAndEmitEvents(Transform? mapSurface, Func<float, float, string?>? resolveImpact = null)
     {
         if (mapSurface == null)
             return;
@@ -38,8 +45,13 @@ public class ImpactReader
             if (instance == null || !instance.activeInHierarchy)
                 continue;
 
+            var instanceId = instance.GetInstanceID();
+            var instanceChanged = !_lastInstanceIds.TryGetValue(i, out var prevId) || prevId != instanceId;
+            _lastInstanceIds[i] = instanceId;
+
             var local = mapSurface.InverseTransformPoint(instance.transform.position);
-            if (_lastImpactLocal.TryGetValue(i, out var prev)
+            if (!instanceChanged
+                && _lastImpactLocal.TryGetValue(i, out var prev)
                 && Mathf.Abs(local.x - prev.x) < 0.01f && Mathf.Abs(local.y - prev.y) < 0.01f)
                 continue;
             _lastImpactLocal[i] = local;
@@ -49,9 +61,11 @@ public class ImpactReader
             var gunName = "";
             try { gunName = data!.gun?.gameObject?.name ?? $"gun{i}"; } catch { gunName = $"gun{i}"; }
 
+            string? settled = null;
+            try { settled = resolveImpact?.Invoke(kmX, kmY); } catch { }
             EventLog.Append("shell_impact", "map",
-                $"实际弹着({gunName}): km({kmX:F2},{kmY:F2}) [{Agent.GridMath.GridOf((kmX, kmY))}]");
-            try { onImpact?.Invoke(kmX, kmY); } catch { }
+                $"实际弹着({gunName}): km({kmX:F2},{kmY:F2}) [{Agent.GridMath.GridOf((kmX, kmY))}]" +
+                (settled != null ? $" → 在途任务 {settled} 已落地销账" : ""));
         }
 
         PollCorrectionHints();

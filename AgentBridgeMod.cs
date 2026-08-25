@@ -118,13 +118,17 @@ public class AgentBridgeMod : MelonMod
         catch { }
     }
 
-    private sealed record InFlightShell(string Label, string Shell, float KmX, float KmY, float FiredAt, string FiredAtGame = "");
+    private sealed record InFlightShell(string Label, string Shell, float KmX, float KmY, float FiredAt,
+        string FiredAtGame = "", int Serial = 0, float FlightEtaSeconds = 60f);
     private readonly List<InFlightShell> _inFlight = new();
     private const float InFlightTimeoutSeconds = 150f;
     private const float ImpactMatchKm = 3f;
 
-    /// <summary>An actual impact landed: resolve the nearest in-flight shell within range.</summary>
-    private void OnShellImpact(float kmX, float kmY)
+    /// <summary>
+    /// An actual impact landed: resolve the nearest in-flight shell within range and hand its
+    /// identity back so the shell_impact event names the task (#N) that just landed.
+    /// </summary>
+    private string? OnShellImpact(float kmX, float kmY)
     {
         InFlightShell? best = null;
         var bestDist = ImpactMatchKm;
@@ -133,16 +137,36 @@ public class AgentBridgeMod : MelonMod
             var d = MathF.Sqrt((s.KmX - kmX) * (s.KmX - kmX) + (s.KmY - kmY) * (s.KmY - kmY));
             if (d < bestDist) { bestDist = d; best = s; }
         }
-        if (best != null)
-            _inFlight.Remove(best);
+        if (best == null)
+            return null;
+        _inFlight.Remove(best);
+        return $"#{best.Serial} {best.Label} ({best.Shell})";
+    }
+
+    /// <summary>
+    /// The per-gun impact marker cannot signal a repeat impact on the SAME spot (it simply
+    /// does not move), so an in-flight shell that outlives its expected flight time is
+    /// presumed landed and settled WITH an event — never a silent expiry the agent
+    /// misreads as "still flying".
+    /// </summary>
+    private void ResolveOverdueShells()
+    {
+        if (_inFlight.Count == 0)
+            return;
+        var now = UnityEngine.Time.realtimeSinceStartup;
+        foreach (var s in _inFlight.Where(s => now - s.FiredAt > Math.Min(s.FlightEtaSeconds, InFlightTimeoutSeconds)).ToList())
+        {
+            _inFlight.Remove(s);
+            EventLog.Append("shell_impact", "map",
+                $"弹着推定: #{s.Serial} {s.Label} ({s.Shell}) 已超预计飞行时间, 判定已落地并销账 — 弹着标记未移动通常=与前一发落点几乎重合; 可重新评估该目标");
+        }
     }
 
     public List<string> DescribeInFlight()
     {
         var now = UnityEngine.Time.realtimeSinceStartup;
-        _inFlight.RemoveAll(s => now - s.FiredAt > InFlightTimeoutSeconds);
         return _inFlight.Select(s =>
-            $"{s.Label} ({s.Shell}, 出膛@{(s.FiredAtGame.Length > 0 ? s.FiredAtGame : "?")}, 已飞{now - s.FiredAt:F0}s)").ToList();
+            $"#{s.Serial} {s.Label} ({s.Shell}, 出膛@{(s.FiredAtGame.Length > 0 ? s.FiredAtGame : "?")}, 已飞{now - s.FiredAt:F0}s/预计{s.FlightEtaSeconds:F0}s)").ToList();
     }
 
     /// <summary>
@@ -324,6 +348,7 @@ public class AgentBridgeMod : MelonMod
             catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] map poll failed: {ex.Message}"); }
             try { _impacts.PollAndEmitEvents(_map.MapSurface, OnShellImpact); }
             catch { }
+            ResolveOverdueShells();
         }
 
         if (now >= _nextTelegraphPoll)
@@ -411,7 +436,7 @@ public class AgentBridgeMod : MelonMod
             _deployedTasks.Remove(serial);
             _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup, FiredAtGame = EventLog.GameClock });
             EventLog.Append("shell_fired", "fcs",
-                $"炮弹出膛: {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
+                $"炮弹出膛: #{dep.Serial} {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
         }
     }
 
@@ -675,7 +700,8 @@ public class AgentBridgeMod : MelonMod
             if (result == "ok")
             {
                 if (serial > 0)
-                    _deployedTasks[serial] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f);
+                    _deployedTasks[serial] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f,
+                        Serial: serial, FlightEtaSeconds: distKm / 0.4f + 25f);
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as #{serial}");
                 return $"ok (#{serial}){suffix}";
