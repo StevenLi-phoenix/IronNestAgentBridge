@@ -63,9 +63,27 @@ public class MapReader
         return true;
     }
 
+    private Transform? _turretMapModel;
+
+    /// <summary>The single turret miniature on the table (TurretLocationIcon) — inferred ground truth.</summary>
+    private Transform? TurretMapModel()
+    {
+        if (_turretMapModel == null)
+        {
+            var icon = UnityEngine.Object.FindObjectOfType<TurretLocationIcon>();
+            if (icon != null)
+                _turretMapModel = icon.transform;
+        }
+        return _turretMapModel;
+    }
+
     public Vector3 TurretLocalOnMap()
     {
-        if (_mapSurface == null || _turretLocation == null)
+        if (_mapSurface == null)
+            return Vector3.zero;
+        if (TurretMapModel() is { } model)
+            return _mapSurface.InverseTransformPoint(model.position);
+        if (_turretLocation == null)
             return Vector3.zero;
         return _mapSurface.InverseTransformPoint(_turretLocation.position);
     }
@@ -118,20 +136,30 @@ public class MapReader
 
     /// <summary>Visible entities only — fire missions must not target fog-of-war contacts.</summary>
     /// <summary>
-    /// Relocate the game's turret model ("TurretLocation") on the map to a km position.
-    /// FCS reads this object as ground truth, so everything follows naturally.
-    /// Preserves the model's height off the table plane.
+    /// Move the turret miniature on the table (NOT the real turret anchor) to a km
+    /// position. FCS and our solvers read the miniature as the firing origin. Its
+    /// self-positioning behaviour is disabled on first manual move so it stays put.
     /// </summary>
     public string SetDeclaredTurret(float kmX, float kmY)
     {
-        if (_mapSurface == null || _turretLocation == null)
+        if (_mapSurface == null)
             return "map not bound";
+        if (TurretMapModel() is not { } model)
+            return "turret map model (TurretLocationIcon) not found in scene";
 
-        var local = _mapSurface.InverseTransformPoint(_turretLocation.position);
+        try
+        {
+            var behaviour = model.GetComponent<TurretLocationIcon>();
+            if (behaviour != null)
+                behaviour.enabled = false; // take manual control; no snap-back
+        }
+        catch { }
+
+        var local = _mapSurface.InverseTransformPoint(model.position);
         local.x = (kmX - 10.016f) / MapLocalToKm;
         local.y = (kmY - 5.235f) / MapLocalToKm;
-        _turretLocation.position = _mapSurface.TransformPoint(local);
-        return $"turret model moved to km({kmX:F2},{kmY:F2}); all solutions now use it as origin";
+        model.position = _mapSurface.TransformPoint(local);
+        return $"turret map model moved to km({kmX:F2},{kmY:F2}); solutions now use it as origin";
     }
 
     public bool ReturnMarkerHome(int id)
