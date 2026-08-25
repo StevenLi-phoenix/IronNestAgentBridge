@@ -134,6 +134,10 @@ public static class GridMath
         else
             return Error("need at least: 1 line with distanceKm, or 2 lines, or line+circle, or 2 circles");
 
+        if (!InMapBounds(target))
+            return Error($"solution {Fmt(target)} km is outside the map — an observation is wrong " +
+                         "(bearing reversed, wrong observer grid, or mismatched pairing); re-check the report, do not fire at this");
+
         // Pure observation lines get drawn from the observer to the solved intersection.
         foreach (var (p, _) in lines)
             geometry.Lines.Add((p, target));
@@ -141,6 +145,10 @@ public static class GridMath
 
         return Result(target, turretKm);
     }
+
+    // Generous tactical-map envelope (grid A..Z columns, rows into the teens).
+    public static bool InMapBounds((double x, double y) p)
+        => p.x is >= -1 and <= 27 && p.y is >= -1 and <= 16;
 
     private static (double x, double y) Offset((double x, double y) p, double bearingDeg, double distanceKm)
     {

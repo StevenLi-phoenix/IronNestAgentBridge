@@ -362,6 +362,14 @@ public class AgentBridgeMod : MelonMod
             return "need either entityId or bearingDeg+distanceKm";
         }
 
+        // Defense in depth: never fling a marker off the table on an out-of-bounds solution.
+        var kmXCheck = 10.016f + mapX * 3.8164f;
+        var kmYCheck = 5.235f + mapY * 3.8164f;
+        if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
+            return $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected (bad solution?)";
+        if (req.DistanceKm is > 30f)
+            return $"distance {req.DistanceKm:F1}km exceeds any plausible range — rejected";
+
         var markerId = NextMarkerId();
         if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))
         {
