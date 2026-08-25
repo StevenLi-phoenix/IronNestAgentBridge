@@ -349,6 +349,7 @@ public class AgentBridgeMod : MelonMod
             try { _impacts.PollAndEmitEvents(_map.MapSurface, OnShellImpact); }
             catch { }
             ResolveOverdueShells();
+            PollFriendlyIntrusions(now);
         }
 
         if (now >= _nextTelegraphPoll)
@@ -438,6 +439,63 @@ public class AgentBridgeMod : MelonMod
             EventLog.Append("shell_fired", "fcs",
                 $"炮弹出膛: #{dep.Serial} {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
         }
+    }
+
+    // The queue-time friendly-fire intercept only sees the situation AT queue time; the
+    // front line moves. Watch every pending task's blast zone for friendlies that arrived
+    // afterwards and warn the agent once per intrusion (cleared when the zone is clean or
+    // the task leaves), so it can adjust_fire away or cancel before the shot.
+    private readonly HashSet<int> _ffWarned = new();
+    private float _nextFfSweep;
+
+    private void PollFriendlyIntrusions(float now)
+    {
+        if (now < _nextFfSweep || _deployedTasks.Count == 0 || !_map.IsBound)
+            return;
+        _nextFfSweep = now + 5f;
+
+        List<MapEntityDto> entities;
+        List<ShellSpecDto> specs;
+        try
+        {
+            entities = _map.ReadEntities();
+            specs = AmmoReader.ReadShellSpecs();
+        }
+        catch { return; }
+
+        foreach (var (serial, task) in _deployedTasks.ToList())
+        {
+            var blastKm = specs.FirstOrDefault(x => string.Equals(x.Id, task.Shell, StringComparison.OrdinalIgnoreCase))?.ImpactRadius ?? 0f;
+            if (blastKm <= 0.001f)
+                continue;
+
+            var inside = new List<string>();
+            foreach (var e in entities)
+            {
+                if (!e.IsAlive) continue;
+                var friendly = e.Role.Contains("Ally") || e.Role == "Spotter"
+                               || e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
+                               || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase);
+                if (!friendly) continue;
+                var dx = 10.016f + e.MapX * 3.8164f - task.KmX;
+                var dy = 5.235f + e.MapY * 3.8164f - task.KmY;
+                if (MathF.Sqrt(dx * dx + dy * dy) <= blastKm)
+                    inside.Add(e.Id);
+            }
+
+            if (inside.Count > 0)
+            {
+                if (_ffWarned.Add(serial))
+                    EventLog.Append("friendly_warning", "map",
+                        $"⚠误伤预警: 已排任务 #{serial} {task.Label} 的弹着区({task.Shell}半径{blastKm * 1000f:F0}m)内" +
+                        $"现有友军 {string.Join(", ", inside)} — 立即adjust_fire挪开弹着点或cancel_pending_task");
+            }
+            else
+            {
+                _ffWarned.Remove(serial);
+            }
+        }
+        _ffWarned.RemoveWhere(s => !_deployedTasks.ContainsKey(s));
     }
 
     /// <summary>Append the covered target's label to FCS task strings so the agent can correlate.</summary>
