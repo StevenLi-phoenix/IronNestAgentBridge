@@ -638,44 +638,9 @@ public class AgentBridgeMod : MelonMod
         if (req.DistanceKm is { } dist && dist > maxRange)
             return $"distance {dist:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
 
-        // Blast-radius survey around the final aim point: friendlies inside the radius block
-        // the mission (soft — allowDangerouslyFriendlyFire overrides); visible hostiles inside it are
-        // reported back so the LLM can verify a merged strike actually covers its cluster.
-        var suffix = "";
-        var blastKm = spec?.ImpactRadius ?? 0f; // ShellDefinition.ImpactRadius is already km (HE=0.25)
-        if (blastKm > 0.001f)
-        {
-            var friendliesInside = new List<string>();
-            var friendliesNear = new List<string>();
-            var hostilesCovered = new List<string>();
-            foreach (var e in _map.ReadEntities())
-            {
-                if (!e.IsAlive) continue;
-                var dx = 10.016f + e.MapX * 3.8164f - kmXCheck;
-                var dy = 5.235f + e.MapY * 3.8164f - kmYCheck;
-                var dKm = MathF.Sqrt(dx * dx + dy * dy);
-                var friendly = e.Role.Contains("Ally") || e.Role == "Spotter"
-                               || e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
-                               || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase);
-                if (friendly && dKm <= blastKm)
-                    friendliesInside.Add($"{e.Id}({e.Role},距弹着{dKm:F2}km)");
-                else if (friendly && dKm <= blastKm * 1.5f)
-                    friendliesNear.Add($"{e.Id}({dKm:F2}km)");
-                else if (!friendly && dKm <= blastKm)
-                    hostilesCovered.Add($"{e.Id}({dKm:F2}km)");
-            }
-
-            if (friendliesInside.Count > 0 && !req.AllowDangerouslyFriendlyFire)
-                return $"友军误伤警告 — 已拒绝: {string.Join(", ", friendliesInside)} 在弹着点km({kmXCheck:F2},{kmYCheck:F2})" +
-                       $"的{req.Shell}爆炸半径{blastKm * 1000f:F0}m内。用offsetKmX/offsetKmY把弹着点向远离友军一侧移出半径" +
-                       "(会牺牲部分毁伤), 或换更小爆炸半径的弹种; 确认接受误伤才用allowDangerouslyFriendlyFire=true重试";
-            if (friendliesInside.Count > 0)
-                suffix += $"; 警告: 已确认误伤风险, 友军在爆炸半径内: {string.Join(", ", friendliesInside)}";
-            else if (friendliesNear.Count > 0)
-                suffix += $"; 注意: 友军贴近弹着点(≤1.5×爆炸半径): {string.Join(", ", friendliesNear)}";
-            if (hostilesCovered.Count > 0)
-                suffix += $"; 爆炸半径({blastKm * 1000f:F0}m)可同时覆盖: {string.Join(", ", hostilesCovered)}";
-        }
+        var suffix = SurveyBlast(req.Shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire, out var ffRejection);
+        if (ffRejection != null)
+            return ffRejection;
 
         // Moving-target motion model (telegraph intel): transcribe into the map-local
         // linear function the patched FCS extrapolates each planning round.
@@ -737,6 +702,131 @@ public class AgentBridgeMod : MelonMod
             return result;
         }
         return "no map marker available for entity targeting";
+    }
+
+    /// <summary>
+    /// Blast-radius survey around an aim point: friendlies inside the radius set `rejection`
+    /// (soft block — allowDanger overrides); visible hostiles inside it are reported in the
+    /// returned suffix so the LLM can verify a merged strike actually covers its cluster.
+    /// Unknown shell (null/unmatched) surveys nothing — empty suffix, no rejection.
+    /// </summary>
+    private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger, out string? rejection)
+    {
+        rejection = null;
+        var suffix = "";
+        var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, shell, StringComparison.OrdinalIgnoreCase));
+        var blastKm = spec?.ImpactRadius ?? 0f; // ShellDefinition.ImpactRadius is already km (HE=0.25)
+        if (blastKm <= 0.001f)
+            return suffix;
+
+        var friendliesInside = new List<string>();
+        var friendliesNear = new List<string>();
+        var hostilesCovered = new List<string>();
+        foreach (var e in _map.ReadEntities())
+        {
+            if (!e.IsAlive) continue;
+            var dx = 10.016f + e.MapX * 3.8164f - kmX;
+            var dy = 5.235f + e.MapY * 3.8164f - kmY;
+            var dKm = MathF.Sqrt(dx * dx + dy * dy);
+            var friendly = e.Role.Contains("Ally") || e.Role == "Spotter"
+                           || e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
+                           || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase);
+            if (friendly && dKm <= blastKm)
+                friendliesInside.Add($"{e.Id}({e.Role},距弹着{dKm:F2}km)");
+            else if (friendly && dKm <= blastKm * 1.5f)
+                friendliesNear.Add($"{e.Id}({dKm:F2}km)");
+            else if (!friendly && dKm <= blastKm)
+                hostilesCovered.Add($"{e.Id}({dKm:F2}km)");
+        }
+
+        if (friendliesInside.Count > 0 && !allowDanger)
+        {
+            rejection = $"友军误伤警告 — 已拒绝: {string.Join(", ", friendliesInside)} 在弹着点km({kmX:F2},{kmY:F2})" +
+                        $"的{shell}爆炸半径{blastKm * 1000f:F0}m内。用offsetKmX/offsetKmY把弹着点向远离友军一侧移出半径" +
+                        "(会牺牲部分毁伤), 或换更小爆炸半径的弹种; 确认接受误伤才用allowDangerouslyFriendlyFire=true重试";
+            return suffix;
+        }
+        if (friendliesInside.Count > 0)
+            suffix += $"; 警告: 已确认误伤风险, 友军在爆炸半径内: {string.Join(", ", friendliesInside)}";
+        else if (friendliesNear.Count > 0)
+            suffix += $"; 注意: 友军贴近弹着点(≤1.5×爆炸半径): {string.Join(", ", friendliesNear)}";
+        if (hostilesCovered.Count > 0)
+            suffix += $"; 爆炸半径({blastKm * 1000f:F0}m)可同时覆盖: {string.Join(", ", hostilesCovered)}";
+        return suffix;
+    }
+
+    /// <summary>
+    /// LLM-initiated last-minute re-aim of an already-queued/in-preparation FCS task.
+    /// Purely fire-and-forget from FCS's perspective: execution never waits for the agent —
+    /// no adjustment means the task fires on its original solution; an adjustment is laid
+    /// by the FCS staged re-solve pipeline (pre-aim / pre-fire / manual-wait) on its next
+    /// pass. Main thread only.
+    /// </summary>
+    public string AdjustFireMission(AdjustFireRequest req)
+    {
+        if (!_map.IsBound)
+            return "tactical map not bound";
+
+        float mapX, mapY;
+        string label;
+        if (!string.IsNullOrEmpty(req.EntityId))
+        {
+            var entity = _map.FindEntity(req.EntityId!);
+            if (entity == null)
+                return $"entity '{req.EntityId}' not visible on the command table (fog of war or bad id)";
+            mapX = entity.MapX;
+            mapY = entity.MapY;
+            label = req.EntityId!;
+        }
+        else if (!string.IsNullOrEmpty(req.TargetPoint))
+        {
+            var turretLocal = _map.TurretLocalOnMap();
+            var turretKm = ((double)(10.016f + turretLocal.x * 3.8164f), (double)(5.235f + turretLocal.y * 3.8164f));
+            if (Agent.GridMath.ParsePoint(req.TargetPoint!, turretKm) is not { } km)
+                return $"cannot parse target '{req.TargetPoint}' (grid like 'K4 5:0' or 'kmX,kmY')";
+            mapX = (float)((km.x - 10.016) / 3.8164);
+            mapY = (float)((km.y - 5.235) / 3.8164);
+            label = req.TargetPoint!;
+        }
+        else
+        {
+            return "need target or entityId";
+        }
+
+        var offX = req.OffsetKmX ?? 0f;
+        var offY = req.OffsetKmY ?? 0f;
+        if (Math.Abs(offX) > 0.5f || Math.Abs(offY) > 0.5f)
+            return "offset exceeds ±0.5km — offsets are for nudging the burst clear of friendlies; aim at different coordinates instead";
+        if (offX != 0f || offY != 0f)
+        {
+            mapX += offX / 3.8164f;
+            mapY += offY / 3.8164f;
+            label += $" 偏移({offX:+0.00;-0.00},{offY:+0.00;-0.00})km";
+        }
+
+        var kmXCheck = 10.016f + mapX * 3.8164f;
+        var kmYCheck = 5.235f + mapY * 3.8164f;
+        if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
+            return $"new aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected";
+
+        // Same friendly-fire discipline as fire: the re-aimed burst is surveyed with the
+        // task's own shell (looked up from the live FCS queue/guns).
+        var shell = _fcs.TryGetTaskShell(req.TargetId);
+        var suffix = SurveyBlast(shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire, out var ffRejection);
+        if (ffRejection != null)
+            return ffRejection;
+
+        var result = _fcs.AdjustTaskAim(req.TargetId, mapX, mapY);
+        if (result.StartsWith("ok"))
+        {
+            // Cosmetic + bookkeeping: keep the physical marker and the impact-matching aim
+            // point on the new coordinates (marker id == T-number on the marker enqueue path).
+            _map.TryMoveMarker(req.TargetId, mapX, mapY);
+            if (_deployedMarkers.TryGetValue(req.TargetId, out var deployed))
+                _deployedMarkers[req.TargetId] = deployed with { Label = label, KmX = kmXCheck, KmY = kmYCheck };
+            EventLog.Append("fcs_task_update", "fcs", $"T{req.TargetId} 瞄准点已调整 → {label}");
+        }
+        return result + suffix;
     }
 
     /// <summary>Pull the bunker signal horn physically. Main thread only.</summary>

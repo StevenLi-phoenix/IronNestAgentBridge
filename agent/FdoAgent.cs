@@ -111,6 +111,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 开火: 用 **fire 工具**, 每个目标一次调用, 一轮内可连续多次。目标三选一:
   entityId(逐字来自entities[]) / target(坐标点名, 盲射首选) / bearingDeg+distanceKm。
   坐标(target)优于bearing/distance: 诸元入队时按炮塔棋子实时位置推导, 校准后自动正确。
+- 改瞄已排任务: 新情报显示某排队/准备中任务的瞄点错了(目标实际在别处、新弹着提示、
+  友军进入弹着区)时, 优先用 **adjust_fire**(targetId=T编号)直接改瞄, 而不是cancel+重排——
+  保留已装填进度, 更快。FCS不等你: 不改就按原瞄点发, 改了在下一次重解算时上炮,
+  出膛前任意时刻有效(越晚越可能来不及, 已在待发+自动开火时可能赶不上)。
+  会清除该任务的运动模型(改为静态点); 超出已装装药射程会被拒, 那时才cancel重排。
 - 每轮最后用**普通文本**简述决策理由(1-3句): 打了什么/为什么/在等什么。不需要输出任何JSON。
 - priority规则(fire工具的priority参数): 反炮兵/敌方炮兵威胁=90以上(FCS跳过凑单等待
   立即抢占下一门空炮); 统帅部点名的优先目标=70; 常规高价值(仓库/工事/指挥所)=60;
@@ -180,6 +185,25 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "motionAtTime": { "type": "string", "description": "运动模型: 观测时刻'HH:mm'(24h制, 与事件时间戳/电文时刻同轴), 省略=当下" }
         },
         "required": ["shell"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "adjust_fire",
+      "description": "最后时刻修正一个已排队/炮上准备中任务的瞄准点(按T编号, 见'FCS待执行'和左右炮位任务)。FCS**不会等待**你的修正: 不调用则按原瞄准点正常发射; 调用后新瞄点在FCS下一次重解算(装填后预瞄准/开火前校正/人工待发跟瞄)时上炮。比cancel+重排快且保留已装填进度。注意: 会把该任务改为静态瞄点(清除其运动模型/实体跟踪); 新距离超出已装装药射程会被拒绝(此时cancel_pending_task重排); 弹已出膛则无效。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targetId": { "type": "number", "description": "任务的T编号" },
+          "target": { "type": "string", "description": "新瞄准点: 网格'K4 5:0'或'kmX,kmY'" },
+          "entityId": { "type": "string", "description": "或: 改瞄entities[]中的实体当前位置" },
+          "offsetKmX": { "type": "number", "description": "弹着点微偏移km(东正西负, |≤0.5|), 语义同fire" },
+          "offsetKmY": { "type": "number", "description": "弹着点微偏移km(北正南负, |≤0.5|)" },
+          "allowDangerouslyFriendlyFire": { "type": "boolean", "description": "新弹着点友军在爆炸半径内时会拒绝; 确认接受误伤才置true" }
+        },
+        "required": ["targetId"]
       }
     }
   },
@@ -652,6 +676,24 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         return JsonSerializer.Serialize(new { result });
     }
 
+    private string ExecuteAdjustFire(JsonElement args)
+    {
+        if (!args.TryGetProperty("targetId", out var t) || t.ValueKind != JsonValueKind.Number)
+            return JsonSerializer.Serialize(new { error = "targetId required" });
+        var req = new AdjustFireRequest
+        {
+            TargetId = t.GetInt32(),
+            EntityId = args.TryGetProperty("entityId", out var id) ? id.GetString() : null,
+            TargetPoint = args.TryGetProperty("target", out var tp) ? tp.GetString() : null,
+            OffsetKmX = args.TryGetProperty("offsetKmX", out var ox) && ox.ValueKind == JsonValueKind.Number ? ox.GetSingle() : null,
+            OffsetKmY = args.TryGetProperty("offsetKmY", out var oy) && oy.ValueKind == JsonValueKind.Number ? oy.GetSingle() : null,
+            AllowDangerouslyFriendlyFire = args.TryGetProperty("allowDangerouslyFriendlyFire", out var cff) && cff.ValueKind == JsonValueKind.True,
+        };
+        var result = MainThread.Run(() => _mod.AdjustFireMission(req), 15_000).GetAwaiter().GetResult();
+        AppendLog($"adjust T{req.TargetId} -> {result}", "adjust", new { req, result });
+        return JsonSerializer.Serialize(new { result });
+    }
+
     private string ExecuteSetTurret(JsonElement args, (double x, double y) turretKm)
     {
         var pos = args.TryGetProperty("position", out var p) ? p.GetString() ?? "" : "";
@@ -710,6 +752,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 "set_assumed_turret_position" or "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 "cancel_pending_task" => ExecuteCancelPending(args),
+                "adjust_fire" => ExecuteAdjustFire(args),
                 "signal_horn" => JsonSerializer.Serialize(new
                 {
                     result = MainThread.Run(() => _mod.PullSignalHorn(), 10_000).GetAwaiter().GetResult(),

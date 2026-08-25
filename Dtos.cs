@@ -159,3 +159,16 @@ public class FireMissionRequest
     public float? MotionSpeedKmh { get; set; }
     public string? MotionAtTime { get; set; }
 }
+
+// LLM-initiated last-minute re-aim of an already-queued/in-preparation FCS task (by T-number).
+// FCS never waits for this: with no adjustment the task fires on its original solution; with
+// one, the staged re-solve pipeline (pre-aim / pre-fire / manual-wait) lays the new point.
+public class AdjustFireRequest
+{
+    public int TargetId { get; set; }
+    public string? EntityId { get; set; }
+    public string? TargetPoint { get; set; }   // grid "K4 5:0" or "kmX,kmY"
+    public float? OffsetKmX { get; set; }      // same semantics/cap as FireMissionRequest
+    public float? OffsetKmY { get; set; }
+    public bool AllowDangerouslyFriendlyFire { get; set; }
+}

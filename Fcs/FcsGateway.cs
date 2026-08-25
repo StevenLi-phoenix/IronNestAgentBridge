@@ -168,6 +168,57 @@ public class FcsGateway
         return fsc?.GetType().GetProperty("ConsoleCardRequestResult", AnyInstance)?.GetValue(fsc) as string;
     }
 
+    /// <summary>
+    /// Re-aim an already-queued/in-preparation task at a new map-local point (patched FCS).
+    /// Non-blocking: FCS never waits for adjustments; its staged re-solve pipeline picks the
+    /// new point up. Returns the FCS result string, or a diagnostic when unavailable.
+    /// </summary>
+    public string AdjustTaskAim(int targetId, float localX, float localY)
+    {
+        var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
+        if (fsc == null)
+            return !modPresent ? "IronNestFCS Smart mod not present"
+                 : !logicLoaded ? "FCS Logic not loaded (scene not bound yet?)"
+                 : "FCS instance unavailable";
+        var method = fsc.GetType().GetMethod("AdjustTaskAim", AnyInstance);
+        if (method == null)
+            return "FCS build lacks AdjustTaskAim";
+        return method.Invoke(fsc, new object[] { targetId, localX, localY }) as string ?? "adjust failed";
+    }
+
+    /// <summary>Shell type of a queued/executing task by T-number ("HE"/"AP"/…), null if not found.</summary>
+    public string? TryGetTaskShell(int targetId)
+    {
+        var fsc = ResolveFsc(out _, out _);
+        if (fsc == null) return null;
+        var t = fsc.GetType();
+        string? ShellOf(object? task)
+        {
+            if (task == null) return null;
+            var tt = task.GetType();
+            try
+            {
+                if (!Equals(tt.GetField("targetId", AnyInstance)?.GetValue(task), targetId))
+                    return null;
+                return tt.GetField("bulletType", AnyInstance)?.GetValue(task)?.ToString();
+            }
+            catch { return null; }
+        }
+        try
+        {
+            if (ShellOf(t.GetProperty("LeftTask", AnyInstance)?.GetValue(fsc)) is { } left)
+                return left;
+            if (ShellOf(t.GetProperty("RightTask", AnyInstance)?.GetValue(fsc)) is { } right)
+                return right;
+            if (t.GetProperty("QueueCan", AnyInstance)?.GetValue(fsc) is System.Collections.IEnumerable queue)
+                foreach (var task in queue)
+                    if (ShellOf(task) is { } shell)
+                        return shell;
+        }
+        catch { }
+        return null;
+    }
+
     /// <summary>Cancel a pending (not yet executing) FCS task by its T-number. Patched FCS only.</summary>
     public string CancelPending(int targetId)
     {

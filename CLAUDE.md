@@ -2,7 +2,13 @@
 
 ## 当前状态（2026-08-25 会话交接）
 
-- **双端均已部署**（桥 Mods\ 1:56 版；FCS Logic UserData\ 热部署最新）。
+- **FCS Logic 已热部署最新；桥最新版在 bin\staging\ 待部署**（游戏运行中，关游戏后拷入 Mods\）。
+- 最新增量（两端）：**adjust_fire 最后时刻改瞄**——LLM 主动修正已排队/炮上准备中任务的
+  瞄准点（按 T 编号），FCS **不等待**（不改就按原瞄点发）：ArtilleryTask.aimAdjusted 标记把
+  三段重解门（pre-aim/pre-fire/manual-wait）扩到静态任务，pre-fire 对改瞄任务用 0.03km 细阈值
+  而非 50m 显著性门；FSC.AdjustTaskAim 清运动模型改静态点、炮上任务校验已装装药射程
+  （超出拒绝→cancel 重排）；桥侧 AdjustFireMission 复用友军普查（SurveyBlast 抽出共用，
+  弹种从 FCS 队列反查）+ 挪物理标记 + 更新弹着匹配点；工具 adjust_fire + `POST /adjust`。
 - 本轮新增（桥）：任务生命周期自动化（结束自动停 agent / 新任务 FullReset 清历史，
   MissionManager.CurrentPhase 轮询）；`counter_battery` 倒计时事件（20s 一报）；
   24h 世界时钟时间轴（所有事件/快照/工具回执带 [@HH:mm]）；事件防抖 1s + 去重；
@@ -129,4 +135,5 @@
 
 `GET /state` `GET /events` `GET /markers` `GET /console` `GET /find` `POST /fire`
 `POST /print` `POST /draw` `POST /draw/clear` `POST /turret` `POST /requisition`
-`POST /horn` `POST /scoutplane`(prefab spawn 备胎)
+`POST /horn` `POST /adjust`(改瞄 {targetId, target|entityId, offsetKmX?, offsetKmY?})
+`POST /scoutplane`(prefab spawn 备胎)
