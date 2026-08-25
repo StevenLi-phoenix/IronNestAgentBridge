@@ -104,7 +104,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "fire",
-      "description": "排一个火力任务(FCS自动完成购弹/装填/瞄准)。目标三选一: entityId(必须逐字来自entities[]); target(坐标点名, 网格'K4 5:0'或'kmX,kmY', 盲射首选, 诸元入队时按棋子实时位置推导); bearingDeg+distanceKm(显式诸元)。立即返回排队结果。",
+      "description": "排一个火力任务(FCS自动完成购弹/装填/瞄准)。目标三选一: entityId(必须逐字来自entities[]); target(坐标点名, 网格'K4 5:0'或'kmX,kmY', 盲射首选, 诸元入队时按棋子实时位置推导); bearingDeg+distanceKm(显式诸元)。立即返回排队结果。**注意友军**: 开火前核对弹着点周边——落点在友军/平民(role含Ally/Spotter/civilian)的弹药爆炸半径内即构成误伤, 绝不对其开火, 盲射点也要避开。",
       "parameters": {
         "type": "object",
         "properties": {
