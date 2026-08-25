@@ -89,6 +89,8 @@ public class StateSnapshotDto
     // Shell punchcards physically present on the requisition console — the only buyable types this mission.
     public List<string> AvailableShells { get; set; } = new();
     public List<CardDto> Cards { get; set; } = new();
+    // Requisition-point balance at snapshot time — every purchase (shell or card) draws on it.
+    public int? RequisitionPoints { get; set; }
     public List<ShellSpecDto> ShellSpecs { get; set; } = new();
     // Shells fired but not yet landed: gone from the FCS queue and the gun slots, yet their
     // targets are already served — re-queuing them double-spends ammunition.

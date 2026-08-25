@@ -155,6 +155,9 @@
   .distanceDial 物理优先，Distance 读回验证，SetDistanceInternal 兜底——与 bearing 同款三段式）。
 - 并发：卡片购买走 FCS 的 ConsoleCardRequest DTO 优先级队列（入队即踢按需排空协程），
   桥经 `FSC.RequestConsoleCard(...)` 提交，不再自持锁。
+- 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
+  → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
+  购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
 - **陷阱：`ShellDefinition.ImpactRadius` 单位是 km**（HE=0.25、HCHE=0.55、AP=0.15）。
   曾按米处理导致快照显示"爆半径0m"、友军拦截/覆盖名单形同虚设。
 

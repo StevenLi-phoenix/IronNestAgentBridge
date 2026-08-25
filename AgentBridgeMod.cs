@@ -405,13 +405,18 @@ public class AgentBridgeMod : MelonMod
                 if (!string.IsNullOrEmpty(cardResult) && cardResult != _lastCardResult)
                 {
                     _lastCardResult = cardResult!;
-                    EventLog.Append("requisition", "fcs", $"card request completed: {cardResult}");
+                    EventLog.Append("requisition", "fcs", $"card request completed: {cardResult}{BalanceSuffix()}");
                     Agent.TransactionLog.Write("requisition", cardResult!);
                 }
             }
             catch { }
         }
     }
+
+    // The balance moves on every purchase (shells bought by FCS, cards by the coordinator) —
+    // stamp it onto purchase-adjacent events so the agent always decides on fresh funds.
+    private static string BalanceSuffix()
+        => AmmoReader.ReadRequisitionPoints() is { } p ? $" · 征用点余额 {p}" : "";
 
     // task serial (#N) -> the mission it covers (label + shell + aim point). No physical
     // marker involved: map tokens belong to the player (T3+) and FCS's gun indicators (T1/T2).
@@ -437,7 +442,7 @@ public class AgentBridgeMod : MelonMod
             _deployedTasks.Remove(serial);
             _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup, FiredAtGame = EventLog.GameClock });
             EventLog.Append("shell_fired", "fcs",
-                $"炮弹出膛: #{dep.Serial} {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
+                $"炮弹出膛: #{dep.Serial} {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标{BalanceSuffix()}");
         }
     }
 
@@ -561,6 +566,7 @@ public class AgentBridgeMod : MelonMod
             Cards = AmmoReader.ReadCards(),
         };
         snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
+        snapshot.RequisitionPoints = AmmoReader.ReadRequisitionPoints();
         var cardIds = new HashSet<string>(snapshot.AvailableShells, StringComparer.OrdinalIgnoreCase);
         snapshot.ShellSpecs = AmmoReader.ReadShellSpecs().Where(s => cardIds.Contains(s.Id)).ToList();
         snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);

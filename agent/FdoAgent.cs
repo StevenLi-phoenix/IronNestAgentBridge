@@ -132,7 +132,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   大致方位和距离提示。注意: 方位角有误差(实为一个方向范围), 距离数字也不精确, 且
   误差有多大不可知——两者都严禁当作解算输入。只做定性修正: 下一发沿提示方向、按
   提示距离的量级移动瞄点再试射, 逐发收敛（或者使用侦察）。"弹着确认命中"(无箭头)说明爆炸半径内已有目标。
-- 弹药成本(征用点, **实价以本局清单为准**): 侦察弹(STAR/SMK, 通常2点)比杀伤弹便宜一个
+- 弹药成本(征用点, **实价以本局清单为准**): 快照每轮给出**征用点余额**, 购买/出膛事件也附
+  实时余额——排任务前先对余额做预算: 队列里未开火任务的弹价总和不得超过余额, 否则FCS买弹
+  必败白占炮位; 余额紧张时优先留够反炮兵应对的钱(杀伤弹或MoveZone)。侦察弹(STAR/SMK, 通常2点)比杀伤弹便宜一个
   量级——侦察性盲射一律用STAR, 它的任务是照亮/揭示, 不是摧毁; 用杀伤弹盲射等于花几倍
   的钱赌一发不准的弹。只有对已揭示目标(entityId)才用杀伤弹。**杀伤弹之间按性价比选**:
   对照规格表算"每点覆盖面积/伤害"——如HCHE爆炸半径(550m)约为HE(250m)的2.2倍、覆盖面积
@@ -614,6 +616,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         string CardLabel(CardDto c) => $"{c.Id}({c.Cost}点{(c.RemainingUses > 0 ? $", 余{c.RemainingUses}次" : "")})";
         var shells = s.Cards.Where(x => shellNames.Contains(x.Id)).ToList();
         var specials = s.Cards.Where(x => !shellNames.Contains(x.Id)).ToList();
+        if (s.RequisitionPoints is { } pts)
+            sb.AppendLine($"征用点余额: {pts}点(每次购买实时扣减, 买不起的方案不要排)");
         sb.AppendLine("征用台可购弹种及单价(开火只能从此选, 清单外弹种购买必败): "
                       + (shells.Count == 0 ? "(未就绪)" : string.Join(", ", shells.Select(CardLabel))));
         if (specials.Count > 0)

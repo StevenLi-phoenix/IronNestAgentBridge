@@ -12,6 +12,17 @@ public static class AmmoReader
 {
     public static List<string> ReadAvailableShells() => ReadCards().Select(c => c.Id).ToList();
 
+    /// <summary>Current requisition-point balance from the game's stats tracker (null when unreadable).</summary>
+    public static int? ReadRequisitionPoints()
+    {
+        try
+        {
+            var tracker = MissionStatsTracker.Instance;
+            return tracker != null ? tracker.requisitionPoints : null;
+        }
+        catch { return null; }
+    }
+
     private static List<ShellSpecDto>? _specCache;
 
     /// <summary>
