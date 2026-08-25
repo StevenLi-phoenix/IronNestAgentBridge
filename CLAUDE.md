@@ -32,9 +32,11 @@
   优先级向量；P≥90 跳过凑单窗（反炮击"立即执行"）。
 
 **画图（物理正统）**
-- `MapMarkerPlacer.RestoreMissionMarkers(List<MapMarkerSaveData>)` = 玩家笔迹的存档恢复管线。
+- 逐条画用实例方法 `placer.RestoreMarker(MapMarkerSaveData)`（追加语义, 实测验证）。
+  **陷阱**: 静态 `RestoreMissionMarkers(list)` 是"清空后整体恢复", 会连玩家手绘一起洗掉。
 - 存档坐标 == km 帧（实测标定）。prefab：MapMarkerRED/Yellow/White（笔）、MapMarkerDiscCompass
   （圆规，origin=圆心 target=半径端点）。点 = 零长度笔画（origin==target）。
+- 侦察机购买实测通过: 插卡→bearing旋钮SetDialValue→购买钮, 卡价每局不同(读实价)。
 
 **征用台**
 - 购买 = 纯物理模拟：卡片瞬移到槽位 `(6.4814,-2.4675,-22.0968)` → `DraggableItem.MoveToSlot()`
