@@ -176,6 +176,8 @@ public class AgentBridgeMod : MelonMod
             _nextCinematicCheck = now + 0.5f;
             try { UpdateCinematicState(); }
             catch { }
+            try { DetectManualCalibration(); }
+            catch { }
         }
 
         if (now >= _nextFcsSummary)
@@ -268,6 +270,8 @@ public class AgentBridgeMod : MelonMod
         _map.Unbind();
         _telegraph.Reset();
         _baselineCamera = null;
+        TurretCalibrated = false;
+        _lastPieceLocal = null;
         _autoStartDone = false;
         _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
         if (AgentConfig.LlmControl)
@@ -331,6 +335,7 @@ public class AgentBridgeMod : MelonMod
             var turretLocal = _map.TurretLocalOnMap();
             snapshot.TurretMapX = turretLocal.x;
             snapshot.TurretMapY = turretLocal.y;
+            snapshot.TurretCalibrated = TurretCalibrated;
             snapshot.Entities = _map.ReadEntities();
             snapshot.Markers = _map.ReadMarkers();
         }
@@ -372,6 +377,25 @@ public class AgentBridgeMod : MelonMod
         return result;
     }
 
+    // Calibration is an act, not a position property: true once someone (agent tool or a
+    // manual drag we detect) has deliberately placed the piece this mission.
+    public bool TurretCalibrated { get; private set; }
+    private UnityEngine.Vector3? _lastPieceLocal;
+
+    private void DetectManualCalibration()
+    {
+        if (!_map.IsBound) return;
+        var local = _map.TurretLocalOnMap();
+        if (_lastPieceLocal is { } prev
+            && (Math.Abs(local.x - prev.x) > 0.02f || Math.Abs(local.y - prev.y) > 0.02f)
+            && !TurretCalibrated)
+        {
+            TurretCalibrated = true; // player dragged the piece — counts as calibration
+            EventLog.Append("turret_position", "map", "turret piece was moved manually — treated as calibrated");
+        }
+        _lastPieceLocal = local;
+    }
+
     public UnityEngine.Vector3 ReadTurretLocal() => _map.TurretLocalOnMap();
 
     public MapEntityDto? FindVisibleEntity(string entityId) => _map.FindEntity(entityId);
@@ -385,6 +409,11 @@ public class AgentBridgeMod : MelonMod
         if (Math.Abs(kmX - 10.016f) < 0.15f && Math.Abs(kmY - 5.235f) < 0.15f)
             return "km(10.02,5.24) 是地图原点(未校准哨兵值), 不是真实炮位 — rejected。校准依据只能是统帅部电文里的铁巢网格";
         var result = _map.SetDeclaredTurret(kmX, kmY);
+        if (!result.Contains("not") && !result.Contains("rejected"))
+        {
+            TurretCalibrated = true;
+            _lastPieceLocal = _map.TurretLocalOnMap();
+        }
         EventLog.Append("turret_position", "map", result);
         return result;
     }

@@ -382,11 +382,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         sb.AppendLine("## 战场状态");
         // Never print the turret coordinate here — the agent's knowledge of its own
         // position must come from the wire + its own calibration, or it echoes whatever
-        // value the system shows (observed failure mode). Status only.
-        var turretUnplaced = Math.Abs(s.TurretMapX) < 0.01f && Math.Abs(s.TurretMapY) < 0.01f;
-        sb.AppendLine(turretUnplaced
-            ? "炮塔棋子: ⚠未校准! 先按统帅部电文的铁巢网格set_turret_position, 校准前实体方位/距离均不可信"
-            : "炮塔棋子: 已校准(如需查询用get_turret_position)");
+        // value the system shows (observed failure mode). Calibration is tracked as an
+        // ACT this mission (tool call or detected manual drag), not inferred from position.
+        sb.AppendLine(s.TurretCalibrated
+            ? "炮塔棋子: 已校准(如需查询用get_turret_position)"
+            : "炮塔棋子: ⚠本局尚未校准! 出生默认位置不可信, 先按统帅部电文的铁巢网格set_turret_position, 校准前实体方位/距离均不可信");
         sb.AppendLine($"FCS: pending={s.Fcs.PendingCount} done={s.Fcs.CompletedTaskCount} fail={s.Fcs.FailedTaskCount}"
                       + $" | L: {s.Fcs.LeftTask ?? "-"} | R: {s.Fcs.RightTask ?? "-"}");
         if (s.Fcs.PendingTasks.Count > 0)

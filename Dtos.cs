@@ -75,6 +75,7 @@ public class StateSnapshotDto
     public bool SceneBound { get; set; }
     public float TurretMapX { get; set; }
     public float TurretMapY { get; set; }
+    public bool TurretCalibrated { get; set; }
     public List<MapEntityDto> Entities { get; set; } = new();
     public List<MarkerDto> Markers { get; set; } = new();
     public List<TeleprinterDto> Teleprinters { get; set; } = new();
