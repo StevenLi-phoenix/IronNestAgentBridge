@@ -19,6 +19,7 @@ public class AgentBridgeMod : MelonMod
     private const float TelegraphPollSeconds = 1.0f;
 
     private readonly MapReader _map = new();
+    private readonly ImpactReader _impacts = new();
     private readonly TeleprinterReader _telegraph = new();
     private readonly FcsGateway _fcs = new();
     private BridgeServer? _server;
@@ -129,6 +130,8 @@ public class AgentBridgeMod : MelonMod
             _nextMapPoll = now + MapPollSeconds;
             try { _map.PollAndEmitEvents(); }
             catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] map poll failed: {ex.Message}"); }
+            try { _impacts.PollAndEmitEvents(_map.MapSurface); }
+            catch { }
         }
 
         if (now >= _nextTelegraphPoll)
@@ -261,6 +264,7 @@ public class AgentBridgeMod : MelonMod
         MissionQueue.Clear();
         _deployedMarkers.Clear();
         _map.Unbind();
+        _impacts.Reset();
         _telegraph.Reset();
         _baselineCamera = null;
         TurretCalibrated = false;

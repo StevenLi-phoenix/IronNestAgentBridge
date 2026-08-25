@@ -25,6 +25,8 @@ public class MapReader
 
     public bool IsBound { get; private set; }
 
+    public Transform? MapSurface => _mapSurface;
+
     public void Unbind()
     {
         IsBound = false;
