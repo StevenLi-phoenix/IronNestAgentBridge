@@ -662,6 +662,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 
         foreach (var action in actions.EnumerateArray())
         {
+            // A reset/stop mid-round must not leak stale-worldview missions into the new state.
+            if (ct.IsCancellationRequested)
+            {
+                AppendLog("round cancelled mid-execution (reset/stop); remaining actions dropped");
+                return;
+            }
             var req = new FireMissionRequest
             {
                 EntityId = action.TryGetProperty("entityId", out var id) ? id.GetString() : null,
