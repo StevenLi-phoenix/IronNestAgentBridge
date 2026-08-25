@@ -534,14 +534,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         var kmY = MapOffsetY + local.y * MapLocalToKm;
         var col = (int)kmX is >= 0 and < 26 ? ((char)('A' + (int)kmX)).ToString() : "#";
         var grid = $"{col}{(int)kmY + 1} {(int)(kmX * 10) % 10}:{(int)(kmY * 10) % 10}";
-        var unplaced = Math.Abs(local.x) < 0.01f && Math.Abs(local.y) < 0.01f;
         return JsonSerializer.Serialize(new
         {
             kmX = Math.Round(kmX, 3),
             kmY = Math.Round(kmY, 3),
             grid,
-            unplaced,
-            note = unplaced ? "棋子在地图原点, 尚未校准 — 先set_turret_position" : "已校准",
         });
     }
 
