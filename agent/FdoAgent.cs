@@ -169,7 +169,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         "type": "object",
         "properties": {
           "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" },
-          "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查方向方位角(炮塔原点, 北=0顺时针)" },
+          "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查飞行方向方位角(北=0顺时针)" },
+          "startGrid": { "type": "string", "description": "侦察类卡: 起飞网格单元(如'P4')——飞机从此格沿bearingDeg方向飞行揭雾, 必须与bearing一起规划成想要的航线" },
           "priority": { "type": "number", "description": "0-100, 默认50; 紧急转移类=100" }
         },
         "required": ["cardId"]
@@ -585,9 +586,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         float? bearing = args.TryGetProperty("bearingDeg", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetSingle() : null;
         var cardPriority = args.TryGetProperty("priority", out var pr) && pr.ValueKind == JsonValueKind.Number
             ? Math.Clamp(pr.GetInt32(), 0, 100) : 50;
+        var startGrid = args.TryGetProperty("startGrid", out var sg) ? sg.GetString() : null;
         // Preferred path: a DTO into FCS's own console coordinator (serialized with its
         // auto-buys). Legacy bridge-side physical routine only for stock FCS.
-        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing, cardPriority), 15_000)
+        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing, cardPriority, startGrid), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });
     }

@@ -141,10 +141,14 @@ public class FcsGateway
     /// Returns null when the FCS build lacks the API — caller falls back to the legacy
     /// bridge-side physical routine.
     /// </summary>
-    public string? RequestCardPurchase(string cardId, float? bearingDeg, int priority = 50)
+    public string? RequestCardPurchase(string cardId, float? bearingDeg, int priority = 50, string? startGrid = null)
     {
         var fsc = ResolveFsc(out _, out _);
         if (fsc == null) return null;
+        var full = fsc.GetType().GetMethod("RequestConsoleCard", AnyInstance,
+            new[] { typeof(string), typeof(float), typeof(bool), typeof(int), typeof(string) });
+        if (full != null)
+            return full.Invoke(fsc, new object?[] { cardId, bearingDeg ?? 0f, bearingDeg.HasValue, priority, startGrid }) as string;
         var withPriority = fsc.GetType().GetMethod("RequestConsoleCard", AnyInstance,
             new[] { typeof(string), typeof(float), typeof(bool), typeof(int) });
         if (withPriority != null)
