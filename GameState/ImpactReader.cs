@@ -121,9 +121,9 @@ public class ImpactReader
             // player doesn't know the tier's error parameters, so neither does the agent.
             string range = "";
             try { range = hint.rangeText?.text ?? ""; } catch { }
-            var distance = string.IsNullOrWhiteSpace(range) ? "" : $", 距离提示\"{range.Trim()}\"";
+            var distance = string.IsNullOrWhiteSpace(range) ? "" : $", 距离（不准确）\"{range.Trim()}\"";
             EventLog.Append("impact_hint", "map",
-                $"弹着修正提示(黄箭头): 脱靶弹着 {at} → 附近目标在方位约 {displayedBearing:F0}° 方向{distance}");
+                $"弹着修正提示(黄箭头): 脱靶弹着 {at} → 附近目标在方位约 （不准确）{displayedBearing:F0}° 方向{distance}");
         }
     }
 }
