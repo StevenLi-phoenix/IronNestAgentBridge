@@ -60,11 +60,20 @@ public static class MapDrawer
         return new { placers, captured };
     }
 
-    /// <summary>Draw one marker (line/circle depending on prefab) via the save-restore pipeline.</summary>
+    /// <summary>
+    /// Draw one marker (line/circle depending on prefab) by appending through the placer's
+    /// instance RestoreMarker. NEVER use static RestoreMissionMarkers per stroke — it is
+    /// clear-then-restore and wipes every existing drawing including the player's.
+    /// </summary>
     public static string Draw(int placerIndex, string prefabName, Vector2 origin, Vector2 target)
     {
         try
         {
+            var placers = UnityEngine.Object.FindObjectsOfType<MapMarkerPlacer>(true);
+            if (placers.Length == 0)
+                return "no MapMarkerPlacer in scene";
+            var placer = placerIndex >= 0 && placerIndex < placers.Length ? placers[placerIndex] : placers[0];
+
             var save = new MapMarkerSaveData
             {
                 PlacerIndex = placerIndex,
@@ -72,9 +81,7 @@ public static class MapDrawer
                 Origin = origin,
                 Target = target,
             };
-            var list = new Il2CppSystem.Collections.Generic.List<MapMarkerSaveData>();
-            list.Add(save);
-            MapMarkerPlacer.RestoreMissionMarkers(list);
+            placer.RestoreMarker(save);
             return "ok";
         }
         catch (Exception ex)
