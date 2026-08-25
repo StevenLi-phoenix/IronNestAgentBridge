@@ -1,15 +1,23 @@
 # IronNestAgentBridge — 项目知识库
 
-## 当前状态（2026-08-24 会话交接）
+## 当前状态（2026-08-25 会话交接）
 
-- **FCS Logic**（`UserData\IronNestFCS\`）已是最新热部署：priority 队列 + 击发顺序优先级 +
-  HUD 按 P 排序 + 紧急抢占（TryPreemptForUrgent）+ 声明炮塔标记（MapToken_TurretDeclared）。
-- **桥 DLL**：`Mods\` 里是 20:23 版（状态机 + EnableHttpApi 开关）；`bin\staging\` 有更新一版
-  （`set_turret_position` 工具 + `POST /turret` + 青色炮塔标记创建），**待关游戏后拷入 Mods**。
-- cfg：`EnableHttpApi=true`、`LlmControl=false`（F11 开）。桥内部暂存优先队列已整体移除
-  （FCS 原生优先队列是唯一队列）。
-- **待实测**：抢占（日志 grep "preempted"）、HUD P 排序显示、声明炮塔标记全流程、
-  双线交汇修复（原 s 符号 bug）、侦察机购买后飞机实际飞行/揭雾效果。
+- **双端均已部署**（桥 Mods\ 1:56 版；FCS Logic UserData\ 热部署最新）。
+- 本轮新增（桥）：任务生命周期自动化（结束自动停 agent / 新任务 FullReset 清历史，
+  MissionManager.CurrentPhase 轮询）；`counter_battery` 倒计时事件（20s 一报）；
+  24h 世界时钟时间轴（所有事件/快照/工具回执带 [@HH:mm]）；事件防抖 1s + 去重；
+  在途炮弹跟踪（shell_fired 事件 + 快照清单，弹着 3km 匹配/150s 超时销账）；
+  fire 偏移参数 + 友军误伤拦截（allowDangerouslyFriendlyFire）+ 覆盖名单回执；
+  `impact_hint` 黄箭头脱靶提示转述（只报玩家可见模糊度，不披露精度参数）；
+  `signal_horn` 工具 + `POST /horn`；面板 80% 屏高；HCHE 性价比学说；
+  LocationReport/MoveZone 卡学说；内部暂存优先队列已整体移除（FCS 原生队列唯一）。
+- 本轮新增（FCS fork）：移动目标运动模型（trackEntityId 自动跟踪 + LLM motionFrom
+  一次函数转录；三段重解 = pre-aim 45s 视界 / pre-fire 显著性门控 50m / manual-wait 3s）；
+  线性弹道解析解（TryAnalyticElevation）；CoroutineLock 优先级队列；HUD 任务行运动后缀。
+- cfg：`EnableHttpApi=true`、`LlmControl=false`（F11 开）。
+- **待实测**：号角关键词是否命中（无匹配时日志打全量交互件清单，据此补关键词）；
+  LocationReport 回报电文格式（绝对网格 vs 相对方位距离）；HCHE 合并打击行为；
+  跟瞄 [FCS Track] 日志链（pre-aim analytic / pre-fire correction）。
 - **未决提议**：桥自身热重载改造（仿 FCS Host/Logic/ALC 拆分，中等规模重构）——用户未拍板。
 
 独立 MelonLoader mod：把 *Iron Nest: Heavy Turret Simulator* 的战场信息与 IronNestFCS Smart
@@ -53,6 +61,17 @@
 - Logic 在可回收 ALC 里，勿持强引用；主线程 only；`FcsRuntimeClock.IsFocused` 门槛。
 - 我们的 FCS 补丁：`ArtilleryTask.priority`(0-100)，matcher 在槽位数后、装药保护前比较
   优先级向量；P≥90 跳过凑单窗（反炮击"立即执行"）。
+- 移动目标（FCS fork）：ArtilleryTask 带线性运动模型 p(t)=origin+vel·(t−t0)（map-local，
+  任务时钟秒）。来源：`trackEntityId`（FCS 自采样测速，雾中继续外推，90s 后 trackingLost）
+  或桥经反射注入的 LLM 转录模型。排队期每规划轮外推+RefreshSolution；执行期三段重解：
+  pre-aim（装填后、摇仰角前，45s 视界）→ pre-fire（预计弹着偏差>50m 才动炮）→
+  manual-wait（等扳机每 3s，弹道台优先级 10）。仰角重解走 `TryAnalyticElevation`
+  （线性公式），弹道台只剩超射程 fallback。
+- `CoroutineLock` 带优先级队列（高优先放行，同级 FIFO）：弹道/装填/击发通道按任务
+  priority，卡片请求按请求 priority，后台补火药 20，跟瞄重解 10。无参 Acquire() 保留
+  （桥反射兼容）。
+- 24h 世界时钟：`GenericTimerSceneSync`（怀表/挂钟数据源，CurrentTime=当日秒数）。
+  桥 `EventLog.GameClock`（"HH:mm"）与 FCS `MapTable.MissionNow` 同源；电文时刻引用同轴。
 
 **画图（物理正统）**
 - 逐条画用实例方法 `placer.RestoreMarker(MapMarkerSaveData)`（追加语义, 实测验证）。
@@ -72,9 +91,15 @@
 - 卡片元数据：`PunchcardRuntime.CurrentDefinition` (`PunchcardDefinitionV2`: ID/Cost/RemainingUses/
   IsRecon/Prefab_ConsoleControls)。侦察机卡 ID：`ScoutPlane` / `ScoutPlane_OnTimeUse`（68 点）。
 - 侦察卡插入后生成 `ConsoleControl_CoordinatesBearing(Clone)`，内含 `DialOdometerPunchcardBridge`
-  （bearingDial 可 `SetDialValue`；**距离玩家不可选**，起始位置是网格翻牌拨盘）。
-- 并发：反射取 `FSC.SharedResources.Requisition`（CoroutineLock），`yield return Acquire()` /
-  finally `Release()`，与 FCS 自动购弹互斥。
+  （bearingDial 可 `SetDialValue`；**距离玩家不可选**，起始位置是网格翻牌拨盘——
+  `DialToSplitFlipDisplayBinder`，父名含 "Location L"/"Location N"，SetFlapDialSymbol 驱动）。
+- 实测卡 ID：`ScoutPlane`（侦察机，航程约 12 格，bearingDeg+startGrid）；
+  `LocationReport`（位置报告约 3 点，**必须 startGrid 网格输入**，电文回报炮位=校准依据）；
+  `MoveZone`（紧急转移约 65 点，无输入，P100）。价格每局浮动，读实价。
+- 并发：卡片购买走 FCS 的 ConsoleCardRequest DTO 优先级队列（ConsoleCardRequestLoop 串行
+  执行），桥经 `FSC.RequestConsoleCard(...)` 提交，不再自持锁。
+- **陷阱：`ShellDefinition.ImpactRadius` 单位是 km**（HE=0.25、HCHE=0.55、AP=0.15）。
+  曾按米处理导致快照显示"爆半径0m"、友军拦截/覆盖名单形同虚设。
 
 **UI 陷阱**
 - 本游戏 IL2CPP 把 **GUILayout 全家**裁剪了（`GUILayout.Window`/`BeginArea` 全炸
@@ -85,19 +110,23 @@
 ## Agent 设计
 
 - 决策循环在 mod 内后台线程（`FdoAgent`）；游戏访问经 `MainThread.Run`（逻辑必需，同步）或
-  `MainThread.Post`（装饰性如画图，fire-and-forget 绝不阻塞 agent）。失焦自动暂停（不烧 token）。
-- LLM 工具：`solve_target`（线/圆交汇精确解算+自动作图）、`grid_to_km`、`requisition_card`
-  （bearing only）。**严禁 LLM 手算三角**——手算漂移曾导致 ~0.4km 系统性脱靶。
-- 弹种学说：armour=0→HE；armour≥1 单体→AP；APHE=集群杀伤；工事/地下(Fortification/
-  supplycash/hostilebunker)→AP；盲射=效力侦察一律 STAR(2点 vs HE/AP 18点)；
-  弹种/价格以每局征用台实报清单为准。
-- 队列纪律：上炮执行约 1min，但排队可等 15min+；"已下达"≠"已打完"；补射需未击穿报告
-  且队列无该目标。
+  `MainThread.Post`（装饰性如画图，fire-and-forget 绝不阻塞 agent）。失焦/CG 自动暂停。
+  事件先防抖（安静满 1s，上限 6s）+ 去重再决策；任务结束自动停，新任务自动 FullReset。
+- LLM 工具：`fire`（offset/运动模型/友军确认参数）、`solve_target`（交汇解算+自动作图）、
+  `grid_to_km`、`firing_solution`、`get/set_assumed_turret_position`、`cancel_pending_task`、
+  `requisition_card`（bearingDeg/startGrid/priority）、`signal_horn`。
+  **严禁 LLM 手算三角/提前量**——定位交给 solve 工具，移动目标提前量交给 FCS 运动模型。
+- 弹种学说：armour=0→HE；armour≥1 单体→AP；APHE=集群杀伤；工事/地下→AP；盲射一律
+  STAR；杀伤弹之间按"每点覆盖/伤害"性价比选（HCHE 半径 550m ≈ HE 5 倍覆盖、<2 倍价，
+  目标群/合并打击优先）；弹种/价格以每局征用台实报清单为准。
+- 队列纪律：唯一权威=快照 pendingTasks+L/R+**在途炮弹清单**（三态查完才许重排）；
+  上炮执行约 1min，排队可等 15min+。
 - DeepSeek：`deepseek-v4-flash`，max_tokens 上限 393216；峰谷按北京时间 00:30–08:30 半价；
   持久多轮对话保前缀缓存（命中 90%+），100k prompt tokens 触发 auto-compact 接班简报。
 - Transaction log：`UserData\IronNestAgentBridge\transactions-*.jsonl`（决策/工具/用量/征用）。
 
 ## HTTP 调试端点（127.0.0.1:17171）
 
-`GET /state` `GET /events` `GET /markers` `GET /console` `POST /fire` `POST /print`
-`POST /draw` `POST /draw/clear` `POST /scoutplane`(prefab spawn 备胎)
+`GET /state` `GET /events` `GET /markers` `GET /console` `GET /find` `POST /fire`
+`POST /print` `POST /draw` `POST /draw/clear` `POST /turret` `POST /requisition`
+`POST /horn` `POST /scoutplane`(prefab spawn 备胎)
