@@ -53,7 +53,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   覆盖半径500m, **对步兵和车辆均有效**): 中价面杀伤, 与HCHE(550m)同级但对车辆更狠,
   混编目标群优先CLMN; 与PCLM的区别是即时齐落, 无10秒间隔, 移动目标群也可用。
   **INCN燃烧弹**(约12点, 半径250m, 落点起火有蔓延几率): 区域封锁/烧工事周边软目标,
-  火场会持续伤害并可能扩散, 友军方向严禁。
+  火场会持续伤害并可能扩散, 友军方向严禁。**FLCH镖箭弹**(约20点, 大覆盖半径, **仅对
+  露天徒步步兵致命**——载具/工事/任何掩体内全部无效): 大股暴露步兵专用; 目标群混有
+  车辆时改用CLMN, 目标进了工事就换AP系。
   role含Fortification或rawId为supplycash/hostilebunker等工事类=地下/加固目标,
   必须AP。immuneShells非空时严禁选名单内弹种。
   **弹种可用性**: 每个任务的征用台只有部分弹种卡, 见战场状态中的"征用台可购弹种"
@@ -165,7 +167,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   **化学弹**(若本局可购): PHGN光气(约10点, 半径620m)——**仅对"处于被压制状态"的人员
   造成杀伤**: 未被压制的步兵、以及一切工事/装甲/载具都免疫, 单独使用基本无效。
   只作组合技的收尾: 先用压制手段把目标压住, 再补PHGN收割; 没有把握目标
-  正被压制时**默认不选它**, 步兵照常用HE/HCHE。**WP白磷**(约10点, 半径750m, 官方机制:
+  正被压制时**默认不选它**, 步兵照常用HE/HCHE。**PRPG传单弹**(约7点, 官方机制: **压制**
+  敌军并有几率诱使其逃亡/开小差, 零杀伤): 最便宜的压制手段, **压制组合技的标准起手**——
+  PRPG压制→PHGN(仅杀被压制人员)或WP(被压制者即死)收割, 两发合计17~18点清一片步兵;
+  也可单独用于软化敌阵。对友军的压制效果未实测, 不入IFF豁免名单。**WP白磷**(约10点, 半径750m, 官方机制:
   烟云内单位**逃离**, **处于被压制状态者直接死亡**, 且有几率引燃火灾): 双重用途——
   ①区域驱逐: 逼敌步兵放弃阵地/工事(会跑, 不会死); ②收尾: 对已被压制的步兵是即死判定,
   与PHGN同为压制组合技的收割手段(WP还能顺带纵火)。注意它会**驱散**目标——想原地歼灭
@@ -636,14 +641,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         // position must come from the wire + its own calibration, or it echoes whatever
         // value the system shows (observed failure mode). Calibration is tracked as an
         // ACT this mission (tool call or detected manual drag), not inferred from position.
-        if (!string.IsNullOrEmpty(s.SceneName))
-            sb.AppendLine("作战模式: " + s.SceneName switch
+        if (!string.IsNullOrEmpty(s.MissionType))
+            sb.AppendLine("作战模式: " + s.MissionType switch
             {
-                "Mission Chill" => "无尽模式(Chill)——敌军无限补充; 摧毁敌炮只延长反炮击倒计时, 不能根治",
-                "Mission Challenging" => "无尽模式(Challenging)——敌军无限补充; 摧毁敌炮只延长反炮击倒计时, 不能根治",
-                "MissionBase" => "剧本任务——敌军编制有限; 敌炮全灭=反炮击倒计时彻底停止",
-                var t when t!.StartsWith("Mission tutorial") => $"教程关({t})",
-                var other => $"未知场景 '{other}' (按剧本任务处置)",
+                "Chill" => "无尽模式(Chill)——敌军无限补充; 摧毁敌炮只延长反炮击倒计时, 不能根治",
+                "Challange" => "无尽模式(Challenging)——敌军无限补充; 摧毁敌炮只延长反炮击倒计时, 不能根治",
+                "Campaign" => "剧本任务——敌军编制有限; 敌炮全灭=反炮击倒计时彻底停止",
+                "Tutorial" => "教程关",
+                var other => $"未知类型 '{other}' (按剧本任务处置)",
             });
         if (!string.IsNullOrEmpty(s.MissionName))
         {
