@@ -136,7 +136,9 @@
   无杀伤不揭雾）；`PHGN`（光气 10 点，damage=1 半径 **620m**，**仅对"被压制状态"的人员**造成杀伤（实测确认）
   ——未压制步兵/工事/装甲全免疫，单独使用基本无效，只作压制后收尾的组合技，学说默认不选）；`TEAR`（催泪 8 点，**damage=0** 半径
   750m，**破隐弹**（实测确认）：使隐蔽/伪装单位显身，**不揭战争迷雾**——揭雾用 STAR/侦察，
-  破隐用 TEAR，不可互替）。化学弹半径巨大，友军普查自动按实半径拦截。价格每局浮动，读实价。
+  破隐用 TEAR，不可互替）；`WP`（白磷 10 点，damage=0 半径 750m——**推测压制/燃烧，待实测**；
+  若确认压制则 WP→PHGN 是对大股步兵的标准组合技）。化学弹半径巨大，友军普查自动按实半径
+  拦截。价格每局浮动，读实价。
 - distanceKm 输入链（MoveDirection 用）：requisition_card.distanceKm → RequestConsoleCard
   7 参重载 → ConsoleCardRequest.DistanceKm → BuyCardById 距离拨盘（DialOdometerPunchcardBridge
   .distanceDial 物理优先，Distance 读回验证，SetDistanceInternal 兜底——与 bearing 同款三段式）。
