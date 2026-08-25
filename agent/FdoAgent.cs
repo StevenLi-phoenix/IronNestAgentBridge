@@ -136,8 +136,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {
     "type": "function",
     "function": {
-      "name": "get_turret_position",
-      "description": "查询炮塔棋子当前位置(km坐标+网格)。返回unplaced=true表示棋子还停在地图原点未校准。",
+      "name": "get_assumed_turret_position",
+      "description": "查询**当前假定的**炮塔位置(=指挥桌棋子的位置, 即你/玩家校准过的信念值, 不是ground truth)。返回km坐标+网格; unplaced=true表示棋子还停在地图原点未校准。",
       "parameters": { "type": "object", "properties": {} }
     }
   },
@@ -385,7 +385,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         // value the system shows (observed failure mode). Calibration is tracked as an
         // ACT this mission (tool call or detected manual drag), not inferred from position.
         sb.AppendLine(s.TurretCalibrated
-            ? "炮塔棋子: 已校准(如需查询用get_turret_position)"
+            ? "炮塔棋子: 已校准(如需查询假定位置用get_assumed_turret_position)"
             : "炮塔棋子: ⚠本局尚未校准! 出生默认位置不可信, 校准前实体方位/距离均不可信。"
               + "合法校准依据=统帅部电文中的铁巢网格, 或战场/侦查报告中可解算出炮位的观测数据(用solve_target反定位); "
               + "**两者都没有就保持未校准并等待, 绝不猜测/编造坐标**");
@@ -611,7 +611,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 "cancel_pending_task" => ExecuteCancelPending(args),
-                "get_turret_position" => ExecuteGetTurret(),
+                "get_assumed_turret_position" or "get_turret_position" => ExecuteGetTurret(),
                 "firing_solution" => ExecuteFiringSolution(args),
                 "fire" => ExecuteFire(args),
                 // Legacy hallucination shape {"actions":[...]} — execute each as a fire call.
