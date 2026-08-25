@@ -97,6 +97,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   * solve_target: 观测线/距离圆交汇解算, 返回目标位置(kmX,kmY)。战场报告的
     "自X的方位角B°"是一条line {from:"X的网格", bearingDeg:B}; "自X距离D"是一个
     circle {from:..., distanceKm:D}; "自X方位角B及距离D"是line带distanceKm(直接定位)。
+  * calc: 简易计算器(三角一律角度制)——定位工具覆盖不了的散装算术(方位角加减归一、
+    比例、勾股、插值)全部交它, 心算一个数字都不行。
   * distance_between: 任意两点/实体间距离与方位; entities_near: 某点半径内实体清单——
     判断两目标能否合并打击(间距 vs 弹药爆炸半径)、选簇心、排查弹着点周边友军, 用这两个,
     严禁目测坐标差手算。
@@ -316,6 +318,20 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "radiusKm": { "type": "number", "description": "半径km, 默认1.0" }
         },
         "required": ["center"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "calc",
+      "description": "简易计算器: 精确求值算术/三角表达式(数值计算一律交工具, 严禁心算)。三角函数一律**角度制**: sin/cos/tan吃角度, asin/acos/atan/atan2(y,x)返回角度。支持 + - * / % ^ 与括号; 函数 sqrt abs ln log10 exp floor ceil round pow(a,b) min max hypot(x,y) mod360(方位角归一到0~360); 常量 pi e。多条表达式用';'分隔一次算完。示例: 'hypot(3.2,4.1); atan2(3.2,4.1); mod360(275+120)'",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": { "type": "string", "description": "表达式, 可用';'分隔多条" }
+        },
+        "required": ["expression"]
       }
     }
   },
@@ -775,6 +791,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         return (Math.Sqrt(dx * dx + dy * dy), bearing);
     }
 
+    private static string ExecuteCalc(JsonElement args)
+        => args.TryGetProperty("expression", out var e) && e.GetString() is { Length: > 0 } expr
+            ? Calculator.Evaluate(expr)
+            : "need expression";
+
     private string ExecuteDistanceBetween(JsonElement args, StateSnapshotDto s, (double x, double y) turretKm)
     {
         var aSpec = args.TryGetProperty("a", out var av) ? av.GetString() : null;
@@ -952,6 +973,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                     result = MainThread.Run(() => _mod.PullSignalHorn(), 10_000).GetAwaiter().GetResult(),
                 }),
                 "get_assumed_turret_position" or "get_turret_position" => ExecuteGetTurret(),
+                "calc" => ExecuteCalc(args),
                 "distance_between" => ExecuteDistanceBetween(args, snapshot, turretKm),
                 "entities_near" => ExecuteEntitiesNear(args, snapshot, turretKm),
                 "firing_solution" => ExecuteFiringSolution(args),
