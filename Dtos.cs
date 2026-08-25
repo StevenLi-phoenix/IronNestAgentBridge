@@ -108,6 +108,9 @@ public class FireMissionRequest
     // Either give an entityId (bridge moves a spare marker onto it and uses FCS's own math),
     // or give explicit bearing/distance.
     public string? EntityId { get; set; }
+    // Direct aim point: grid "K4 5:0" or "kmX,kmY". Preferred over bearing/distance —
+    // the solution derives from the live turret piece at enqueue time.
+    public string? TargetPoint { get; set; }
     public float? BearingDeg { get; set; }
     public float? DistanceKm { get; set; }
     public string Shell { get; set; } = "HE";

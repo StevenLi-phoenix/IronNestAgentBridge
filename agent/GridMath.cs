@@ -235,37 +235,33 @@ public static class GridMath
         return (Math.Sin(rad), Math.Cos(rad));
     }
 
+    // Positions only — firing solutions are the firing_solution tool's job (live origin).
     private static string Result((double x, double y) target, (double x, double y) turretKm)
     {
-        var dx = target.x - turretKm.x;
-        var dy = target.y - turretKm.y;
-        var dist = Math.Sqrt(dx * dx + dy * dy);
-        var bearing = Math.Atan2(dx, dy) * 180.0 / Math.PI;
-        if (bearing < 0) bearing += 360;
         return JsonSerializer.Serialize(new
         {
             kmX = Math.Round(target.x, 3),
             kmY = Math.Round(target.y, 3),
-            bearingDeg = Math.Round(bearing, 2),
-            distanceKm = Math.Round(dist, 3),
+            grid = GridOf(target),
         });
     }
 
     private static object CandidateOf((double x, double y) target, (double x, double y) turretKm)
     {
-        var dx = target.x - turretKm.x;
-        var dy = target.y - turretKm.y;
-        var dist = Math.Sqrt(dx * dx + dy * dy);
-        var bearing = Math.Atan2(dx, dy) * 180.0 / Math.PI;
-        if (bearing < 0) bearing += 360;
         return new
         {
             kmX = Math.Round(target.x, 3),
             kmY = Math.Round(target.y, 3),
-            bearingDeg = Math.Round(bearing, 2),
-            distanceKm = Math.Round(dist, 3),
+            grid = GridOf(target),
             inMapBounds = InMapBounds(target),
         };
+    }
+
+    /// <summary>km → the tactical map's grid notation (same formula as FCS ConvertPosition).</summary>
+    public static string GridOf((double x, double y) p)
+    {
+        var col = (int)p.x is >= 0 and < 26 ? ((char)('A' + (int)p.x)).ToString() : "#";
+        return $"{col}{(int)p.y + 1} {(int)(p.x * 10) % 10}:{(int)(p.y * 10) % 10}";
     }
 
     private static string Fmt((double x, double y) p) => $"({p.x:F2},{p.y:F2})";

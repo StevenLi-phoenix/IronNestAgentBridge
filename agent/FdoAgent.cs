@@ -39,10 +39,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   (方位角以炮塔为原点, 正北=0°顺时针; 距离单位km)。
 - 定位计算(必须用工具, 严禁手算三角函数——手算漂移是脱靶主因):
   * grid_to_km: 电文网格(如"G6 5:3")转km坐标并给出炮塔到该点的射击诸元
-  * solve_target: 观测线/距离圆交汇解算。战场报告的"自X的方位角B°"是一条line
-    {from:"X的网格", bearingDeg:B}; "自X距离D"是一个circle {from:..., distanceKm:D};
-    "自X方位角B及距离D"是line带distanceKm(直接定位)。把报告数据原样填进工具,
-    返回值里的bearingDeg/distanceKm直接用于开火action。
+  * solve_target: 观测线/距离圆交汇解算, 返回目标位置(kmX,kmY)。战场报告的
+    "自X的方位角B°"是一条line {from:"X的网格", bearingDeg:B}; "自X距离D"是一个
+    circle {from:..., distanceKm:D}; "自X方位角B及距离D"是line带distanceKm(直接定位)。
+  * 开火: 位置类目标用action的target字段("kmX,kmY"或网格)直接点名——诸元由系统
+    在入队时按棋子实时位置推导。firing_solution仅用于人工核对诸元, 不是开火必经步骤。
   你只负责从电文中抄录观测数据和选择组合, 数值计算一律交给工具。
 - 盲射精度认知: 情报本身有量化误差(网格±0.05km、方位角±0.5°), 远距离斜交线解算
   误差被放大。盲射=效力侦察(ranging fire): 第一发的价值是炸开迷雾揭示目标。
@@ -51,10 +52,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 弹药成本(征用点): STAR=2, HE/AP=18。因此侦察性盲射一律用STAR——它的任务是照亮/
   揭示区域, 不是摧毁; 用AP/HE盲射等于花9倍的钱赌一发不准的弹。只有对已揭示目标
   (entityId)才花HE/AP做摧毁性射击。例外: 统帅部明确限制弹种时从其指令。
-- 每次决策输出JSON, 两种action格式, 每个action可带priority(0-100, 默认50):
+- 每次决策输出JSON, 三种action格式, 每个action可带priority(0-100, 默认50):
   {"actions": [{"entityId": "<必须是entities[]中存在的id>", "shell": "HE", "priority": 50},
+               {"target": "K4 5:0", "shell": "AP"},         ← 坐标点名(网格或"kmX,kmY"), 盲射首选
                {"bearingDeg": 75.0, "distanceKm": 9.1, "shell": "AP", "priority": 30}],
    "reason": "..."}
+  坐标(target)优于bearing/distance: 诸元在入队时按炮塔棋子实时位置推导, 棋子校准后自动正确。
   不开火时输出 {"actions": [], "reason": "..."}。
   **注意: 决策JSON是普通文本回复的一部分, 绝不要把它作为工具调用(function call)发送。**
 - priority规则: 反炮兵/敌方炮兵威胁=90以上(FCS会跳过凑单等待立即抢占下一门空炮);
@@ -81,7 +84,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "grid_to_km",
-      "description": "把电文网格坐标(如'G6 5:3')转换为km坐标, 并返回炮塔到该点的方位角与距离",
+      "description": "把电文网格坐标(如'G6 5:3')转换为km坐标(仅位置, 不含诸元)",
       "parameters": {
         "type": "object",
         "properties": { "grid": { "type": "string", "description": "网格, 如 'G6 5:3'" } },
@@ -98,6 +101,20 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         "type": "object",
         "properties": { "position": { "type": "string", "description": "网格如'H2 3:4'或km坐标'7.35,1.45'" } },
         "required": ["position"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "firing_solution",
+      "description": "对指定目标点计算射击诸元(方位角/距离), 以炮塔棋子的**当前实时位置**为原点。给target(网格或km坐标)或entityId二选一。开火前、尤其是棋子刚被移动/校准后, 用它取最新诸元。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "目标: 网格'G6 5:3'或'kmX,kmY'" },
+          "entityId": { "type": "string", "description": "或: entities[]中的实体id" }
+        }
       }
     }
   },
@@ -141,7 +158,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "solve_target",
-      "description": "由观测线/距离圆精确解算目标位置, 返回km坐标和炮塔射击诸元(bearingDeg/distanceKm)。所有三角定位必须用本工具。",
+      "description": "由观测线/距离圆精确解算目标位置, 返回km坐标与网格(仅位置)。所有三角定位必须用本工具。开火时把返回的kmX,kmY直接填进action的target字段('kmX,kmY'), 不需要自己算诸元。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -433,6 +450,49 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 new UnityEngine.Vector2((float)s.x, (float)s.y));
     }
 
+    private string ExecuteFiringSolution(JsonElement args)
+    {
+        var local = MainThread.Run(() => _mod.ReadTurretLocal(), 10_000).GetAwaiter().GetResult();
+        var turret = (x: (double)(MapOffsetX + local.x * MapLocalToKm), y: (double)(MapOffsetY + local.y * MapLocalToKm));
+
+        (double x, double y)? point = null;
+        string label;
+        if (args.TryGetProperty("entityId", out var e) && e.GetString() is { Length: > 0 } entityId)
+        {
+            var entity = MainThread.Run(() => _mod.FindVisibleEntity(entityId), 10_000).GetAwaiter().GetResult();
+            if (entity == null)
+                return JsonSerializer.Serialize(new { error = $"entity '{entityId}' not visible on the map" });
+            point = (MapOffsetX + entity.MapX * MapLocalToKm, MapOffsetY + entity.MapY * MapLocalToKm);
+            label = entityId;
+        }
+        else if (args.TryGetProperty("target", out var t) && t.GetString() is { Length: > 0 } target)
+        {
+            point = GridMath.ParsePoint(target, turret);
+            if (point == null)
+                return JsonSerializer.Serialize(new { error = $"cannot parse target '{target}'" });
+            label = target;
+        }
+        else
+        {
+            return JsonSerializer.Serialize(new { error = "need target or entityId" });
+        }
+
+        var p = point.Value;
+        var dx = p.x - turret.x;
+        var dy = p.y - turret.y;
+        var dist = Math.Sqrt(dx * dx + dy * dy);
+        var bearing = Math.Atan2(dx, dy) * 180.0 / Math.PI;
+        if (bearing < 0) bearing += 360;
+        return JsonSerializer.Serialize(new
+        {
+            target = label,
+            bearingDeg = Math.Round(bearing, 2),
+            distanceKm = Math.Round(dist, 3),
+            turretKm = new { x = Math.Round(turret.x, 3), y = Math.Round(turret.y, 3) },
+            inMapBounds = GridMath.InMapBounds(p),
+        });
+    }
+
     private string ExecuteGetTurret()
     {
         var local = MainThread.Run(() => _mod.ReadTurretLocal(), 10_000).GetAwaiter().GetResult();
@@ -518,6 +578,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 "cancel_pending_task" => ExecuteCancelPending(args),
                 "get_turret_position" => ExecuteGetTurret(),
+                "firing_solution" => ExecuteFiringSolution(args),
                 // Some models hallucinate the decision JSON as a tool call — steer them back.
                 _ when name == "function_calls" || args.TryGetProperty("actions", out _)
                     => JsonSerializer.Serialize(new { error = "这不是工具。{\"actions\":[...],\"reason\":\"...\"} 决策JSON必须作为普通文本回复直接输出, 不要通过工具调用发送。请重新以文本输出你的决策。" }),
@@ -604,12 +665,13 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             var req = new FireMissionRequest
             {
                 EntityId = action.TryGetProperty("entityId", out var id) ? id.GetString() : null,
+                TargetPoint = action.TryGetProperty("target", out var tp) ? tp.GetString() : null,
                 BearingDeg = action.TryGetProperty("bearingDeg", out var b) ? b.GetSingle() : null,
                 DistanceKm = action.TryGetProperty("distanceKm", out var d) ? d.GetSingle() : null,
                 Shell = action.TryGetProperty("shell", out var s) ? s.GetString() ?? "HE" : "HE",
                 Priority = action.TryGetProperty("priority", out var p) ? Math.Clamp(p.GetInt32(), 0, 100) : 50,
             };
-            var label = req.EntityId ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
+            var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
 
             if (AgentConfig.PriorityQueue)
             {

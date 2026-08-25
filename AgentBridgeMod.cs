@@ -374,6 +374,8 @@ public class AgentBridgeMod : MelonMod
 
     public UnityEngine.Vector3 ReadTurretLocal() => _map.TurretLocalOnMap();
 
+    public MapEntityDto? FindVisibleEntity(string entityId) => _map.FindEntity(entityId);
+
     public string SetDeclaredTurret(float kmX, float kmY)
     {
         if (!Agent.GridMath.InMapBounds((kmX, kmY)))
@@ -400,6 +402,16 @@ public class AgentBridgeMod : MelonMod
             mapY = entity.MapY;
             label = req.EntityId!;
         }
+        else if (!string.IsNullOrEmpty(req.TargetPoint))
+        {
+            var turretLocal = _map.TurretLocalOnMap();
+            var turretKm = ((double)(10.016f + turretLocal.x * 3.8164f), (double)(5.235f + turretLocal.y * 3.8164f));
+            if (Agent.GridMath.ParsePoint(req.TargetPoint!, turretKm) is not { } km)
+                return $"cannot parse target '{req.TargetPoint}' (grid like 'K4 5:0' or 'kmX,kmY')";
+            mapX = (float)((km.x - 10.016) / 3.8164);
+            mapY = (float)((km.y - 5.235) / 3.8164);
+            label = req.TargetPoint!;
+        }
         else if (req.BearingDeg is float bearing && req.DistanceKm is float distance)
         {
             var local = _map.SolutionToMapLocal(bearing, distance);
@@ -409,7 +421,7 @@ public class AgentBridgeMod : MelonMod
         }
         else
         {
-            return "need either entityId or bearingDeg+distanceKm";
+            return "need entityId, target, or bearingDeg+distanceKm";
         }
 
         // Defense in depth: never fling a marker off the table on an out-of-bounds solution.
