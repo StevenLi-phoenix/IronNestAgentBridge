@@ -135,8 +135,8 @@
   单个小目标省钱选）；`DRIL`（3 点，**训练弹**：混凝土填充无爆炸物，极小有效半径——校射专用，
   无杀伤不揭雾）；`PHGN`（光气 10 点，damage=1 半径 **620m**，**仅对人员**（实测确认）——
   人员集群面杀伤性价比之王，对工事/装甲/载具无效）；`TEAR`（催泪 8 点，**damage=0** 半径
-  750m，**使区域内单位显形**（实测确认）——全弹种最大单发揭示范围的侦察弹，常规盲射仍用
-  STAR 省钱）。化学弹半径巨大，友军普查自动按实半径拦截。价格每局浮动，读实价。
+  750m，**破隐弹**（实测确认）：使隐蔽/伪装单位显身，**不揭战争迷雾**——揭雾用 STAR/侦察，
+  破隐用 TEAR，不可互替）。化学弹半径巨大，友军普查自动按实半径拦截。价格每局浮动，读实价。
 - distanceKm 输入链（MoveDirection 用）：requisition_card.distanceKm → RequestConsoleCard
   7 参重载 → ConsoleCardRequest.DistanceKm → BuyCardById 距离拨盘（DialOdometerPunchcardBridge
   .distanceDial 物理优先，Distance 读回验证，SetDistanceInternal 兜底——与 bearing 同款三段式）。
