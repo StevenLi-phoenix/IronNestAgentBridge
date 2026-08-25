@@ -22,6 +22,9 @@ public class FdoAgent
 不要因为guns显示isReloading/canFire=false而等待——那是炮的常驻机械状态,
 FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行进度。
 规则:
+- **开局工作流第一步 = 校准炮塔位置**: 收到统帅部电文的铁巢网格(或可反定位的报告数据)后
+  立即set_assumed_turret_position; 依据未到则等待。校准之前不做任何解算、不开火——
+  原点错误会让一切诸元作废。阵地转移后同理, 必须先重新校准。
 - 遵守统帅部电文中的弹药限制与优先目标指令
 - 弹种选择: armour=0的单体目标(步兵/无甲车辆)用HE; armour>=1的单体目标HE大概率
   "未击穿", 用AP。APHE是集群杀伤弹(grouping kill): 穿甲后爆破, 用于多个目标

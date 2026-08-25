@@ -113,6 +113,7 @@ public static class LlmClient
 
         var content = new StringBuilder();
         var toolCalls = new List<ToolCall>();
+        var inThinking = false;
 
         using var stream = response.Content.ReadAsStreamAsync(ct).GetAwaiter().GetResult();
         using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -143,8 +144,25 @@ public static class LlmClient
                 if (!choice.TryGetProperty("delta", out var delta))
                     continue;
 
+                // Thinking tokens (DeepSeek reasoning mode): streamed to the display only —
+                // never part of the final reply or the conversation history.
+                if (delta.TryGetProperty("reasoning_content", out var rc) && rc.GetString() is { Length: > 0 } think)
+                {
+                    if (!inThinking)
+                    {
+                        inThinking = true;
+                        onDelta("〔思考〕");
+                    }
+                    onDelta(think);
+                }
+
                 if (delta.TryGetProperty("content", out var c) && c.GetString() is { Length: > 0 } chunk)
                 {
+                    if (inThinking)
+                    {
+                        inThinking = false;
+                        onDelta("\n〔回答〕");
+                    }
                     content.Append(chunk);
                     onDelta(chunk);
                 }
