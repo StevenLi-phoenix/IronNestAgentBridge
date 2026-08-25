@@ -30,6 +30,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   立即set_assumed_turret_position; 依据未到则等待。校准之前不做任何解算、不开火——
   原点错误会让一切诸元作废。阵地转移后同理, 必须先重新校准。
 - 遵守统帅部电文中的弹药限制与优先目标指令
+- 发信号: 电文/任务指令明确要求"发出信号/拉响号角"时, 用signal_horn工具物理拉响掩体
+  号角(通常用于确认收到指令或通知友军行动, 触发任务阶段推进)。没有要求时不要乱拉。
 - 弹种选择: armour=0的单体目标(步兵/无甲车辆)用HE; armour>=1的单体目标HE大概率
   "未击穿", 用AP。APHE是集群杀伤弹(grouping kill): 穿甲后爆破, 用于多个目标
   聚集在一片区域时一发多杀(如相邻的装甲目标群/装甲与步兵混编群)——看到实体表中
@@ -172,6 +174,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         },
         "required": ["shell"]
       }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "signal_horn",
+      "description": "拉响掩体号角发出信号(物理拉动场景中的号角装置)。仅在统帅部电文/任务指令明确要求'发出信号/拉响号角'时使用——信号通常触发任务阶段推进(如通知友军行动)。本关没有号角装置或未满足条件时会返回失败。",
+      "parameters": { "type": "object", "properties": {} }
     }
   },
   {
@@ -693,6 +703,10 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 "set_assumed_turret_position" or "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 "cancel_pending_task" => ExecuteCancelPending(args),
+                "signal_horn" => JsonSerializer.Serialize(new
+                {
+                    result = MainThread.Run(() => _mod.PullSignalHorn(), 10_000).GetAwaiter().GetResult(),
+                }),
                 "get_assumed_turret_position" or "get_turret_position" => ExecuteGetTurret(),
                 "firing_solution" => ExecuteFiringSolution(args),
                 "fire" => ExecuteFire(args),

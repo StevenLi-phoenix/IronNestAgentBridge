@@ -739,6 +739,28 @@ public class AgentBridgeMod : MelonMod
         return "no map marker available for entity targeting";
     }
 
+    /// <summary>Pull the bunker signal horn physically. Main thread only.</summary>
+    public string PullSignalHorn()
+    {
+        var horn = SignalOperator.FindHorn(out var candidates);
+        if (horn == null)
+            return "本关场景中没有找到号角装置(无匹配horn/signal/siren的交互件) — 无法发出信号";
+        if (!horn.isActive)
+            return $"号角 '{horn.gameObject.name}' 当前不可交互 — 可能尚未满足拉响条件";
+
+        horn.OnClickDown();
+        MelonCoroutines.Start(ReleaseHornClick(horn));
+        var extra = candidates.Count > 1 ? $" (场景候选: {string.Join(", ", candidates)})" : "";
+        EventLog.Append("signal", "game", $"号角已拉响: {horn.gameObject.name}{extra}");
+        return $"号角已拉响: {horn.gameObject.name}";
+    }
+
+    private static System.Collections.IEnumerator ReleaseHornClick(LookAtTarget horn)
+    {
+        yield return new UnityEngine.WaitForSeconds(0.15f);
+        try { horn.OnClickUp(); } catch { }
+    }
+
     public bool PrintOnTeleprinter(string which, string[] lines)
     {
         var printer = which.Equals("primary", StringComparison.OrdinalIgnoreCase)
