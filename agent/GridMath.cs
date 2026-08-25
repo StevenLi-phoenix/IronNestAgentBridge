@@ -128,7 +128,16 @@ public static class GridMath
             if (hits.Count == 0)
                 return Error("range circles do not intersect");
             if (hits.Count > 1 && near is null)
-                return Error($"two circle intersections {Fmt(hits[0])} and {Fmt(hits[1])}; pass 'near' to choose");
+            {
+                // Return both fully-solved candidates so the model picks by context
+                // (which one matches other intel / lies in a plausible area).
+                return JsonSerializer.Serialize(new
+                {
+                    ambiguous = true,
+                    note = "两圆有两个交点, 按其他情报选择其一直接使用, 或用near重解",
+                    candidates = new[] { CandidateOf(hits[0], turretKm), CandidateOf(hits[1], turretKm) },
+                });
+            }
             target = PickNearest(hits, near);
         }
         else
@@ -240,6 +249,23 @@ public static class GridMath
             bearingDeg = Math.Round(bearing, 2),
             distanceKm = Math.Round(dist, 3),
         });
+    }
+
+    private static object CandidateOf((double x, double y) target, (double x, double y) turretKm)
+    {
+        var dx = target.x - turretKm.x;
+        var dy = target.y - turretKm.y;
+        var dist = Math.Sqrt(dx * dx + dy * dy);
+        var bearing = Math.Atan2(dx, dy) * 180.0 / Math.PI;
+        if (bearing < 0) bearing += 360;
+        return new
+        {
+            kmX = Math.Round(target.x, 3),
+            kmY = Math.Round(target.y, 3),
+            bearingDeg = Math.Round(bearing, 2),
+            distanceKm = Math.Round(dist, 3),
+            inMapBounds = InMapBounds(target),
+        };
     }
 
     private static string Fmt((double x, double y) p) => $"({p.x:F2},{p.y:F2})";

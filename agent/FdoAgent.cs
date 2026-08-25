@@ -104,6 +104,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {
     "type": "function",
     "function": {
+      "name": "get_turret_position",
+      "description": "查询炮塔棋子当前位置(km坐标+网格)。返回unplaced=true表示棋子还停在地图原点未校准。",
+      "parameters": { "type": "object", "properties": {} }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "cancel_pending_task",
       "description": "取消FCS等待队列中的一个任务(按T编号, 见'FCS待执行'清单; 每次取消队列中第一个匹配项)。已在左右炮上执行中的任务无法取消(高优先级任务的抢占机制会处理)。用于: 目标已被摧毁但任务还在排队、弹种排错、或需要给队列腾位。",
       "parameters": {
@@ -248,7 +256,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 
     public void ClearLog()
     {
-        lock (_gate) { _log.Clear(); _history.Clear(); }
+        lock (_gate) { _log.Clear(); _history.Clear(); _recentToolCalls.Clear(); }
+        StreamingText = "";
+        LastReason = "";
     }
 
     private void AppendLog(string text, string type = "agent", object? data = null)
@@ -338,7 +348,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("## 战场状态");
-        sb.AppendLine($"炮塔km: ({MapOffsetX + s.TurretMapX * MapLocalToKm:F2}, {MapOffsetY + s.TurretMapY * MapLocalToKm:F2})");
+        var turretUnplaced = Math.Abs(s.TurretMapX) < 0.01f && Math.Abs(s.TurretMapY) < 0.01f;
+        sb.AppendLine($"炮塔km: ({MapOffsetX + s.TurretMapX * MapLocalToKm:F2}, {MapOffsetY + s.TurretMapY * MapLocalToKm:F2})"
+                      + (turretUnplaced ? "  ⚠棋子在地图原点=尚未校准! 立即按统帅部电文的铁巢网格 set_turret_position, 校准前一切诸元都是错的" : ""));
         sb.AppendLine($"FCS: pending={s.Fcs.PendingCount} done={s.Fcs.CompletedTaskCount} fail={s.Fcs.FailedTaskCount}"
                       + $" | L: {s.Fcs.LeftTask ?? "-"} | R: {s.Fcs.RightTask ?? "-"}");
         if (s.Fcs.PendingTasks.Count > 0)
@@ -421,6 +433,24 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 new UnityEngine.Vector2((float)s.x, (float)s.y));
     }
 
+    private string ExecuteGetTurret()
+    {
+        var local = MainThread.Run(() => _mod.ReadTurretLocal(), 10_000).GetAwaiter().GetResult();
+        var kmX = MapOffsetX + local.x * MapLocalToKm;
+        var kmY = MapOffsetY + local.y * MapLocalToKm;
+        var col = (int)kmX is >= 0 and < 26 ? ((char)('A' + (int)kmX)).ToString() : "#";
+        var grid = $"{col}{(int)kmY + 1} {(int)(kmX * 10) % 10}:{(int)(kmY * 10) % 10}";
+        var unplaced = Math.Abs(local.x) < 0.01f && Math.Abs(local.y) < 0.01f;
+        return JsonSerializer.Serialize(new
+        {
+            kmX = Math.Round(kmX, 3),
+            kmY = Math.Round(kmY, 3),
+            grid,
+            unplaced,
+            note = unplaced ? "棋子在地图原点, 尚未校准 — 先set_turret_position" : "已校准",
+        });
+    }
+
     private string ExecuteCancelPending(JsonElement args)
     {
         if (!args.TryGetProperty("targetId", out var t) || t.ValueKind != JsonValueKind.Number)
@@ -487,6 +517,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "requisition_card" => ExecuteRequisition(args, snapshot),
                 "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 "cancel_pending_task" => ExecuteCancelPending(args),
+                "get_turret_position" => ExecuteGetTurret(),
                 // Some models hallucinate the decision JSON as a tool call — steer them back.
                 _ when name == "function_calls" || args.TryGetProperty("actions", out _)
                     => JsonSerializer.Serialize(new { error = "这不是工具。{\"actions\":[...],\"reason\":\"...\"} 决策JSON必须作为普通文本回复直接输出, 不要通过工具调用发送。请重新以文本输出你的决策。" }),

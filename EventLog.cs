@@ -53,4 +53,18 @@ public static class EventLog
     {
         get { lock (Gate) return _nextSeq - 1; }
     }
+
+    /// <summary>
+    /// Full-reset support: drop all buffered events (sequence stays monotonic). Telegraph
+    /// and map pollers regenerate current-state events after rebinding, so a restarted
+    /// agent rebuilds awareness from live reality instead of replaying stale history.
+    /// </summary>
+    public static void Clear()
+    {
+        lock (Gate)
+        {
+            Events.Clear();
+            Monitor.PulseAll(Gate);
+        }
+    }
 }

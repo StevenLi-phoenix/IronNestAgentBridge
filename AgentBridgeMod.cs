@@ -261,6 +261,8 @@ public class AgentBridgeMod : MelonMod
         Agent.TransactionLog.Write("reset", $"full reset: {reason}");
         _agent?.Stop();
         _agent?.ClearLog();
+        EventLog.Clear(); // stale events must not replay into the restarted agent's fresh context
+        _lastCardResult = "";
         MissionQueue.Clear();
         _deployedMarkers.Clear();
         _map.Unbind();
@@ -370,8 +372,12 @@ public class AgentBridgeMod : MelonMod
         return result;
     }
 
+    public UnityEngine.Vector3 ReadTurretLocal() => _map.TurretLocalOnMap();
+
     public string SetDeclaredTurret(float kmX, float kmY)
     {
+        if (!Agent.GridMath.InMapBounds((kmX, kmY)))
+            return $"km({kmX:F1},{kmY:F1}) is outside the map — rejected (check the grid conversion)";
         var result = _map.SetDeclaredTurret(kmX, kmY);
         EventLog.Append("turret_position", "map", result);
         return result;
