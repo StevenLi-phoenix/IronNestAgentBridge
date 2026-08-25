@@ -115,12 +115,13 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "在征用台上插入指定打孔卡、设置卡片旋钮、按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(如ScoutPlane)给bearingDeg指定侦查方向, 飞机沿该方向揭开侦查条带; 距离/起始位置游戏不可选, 无此参数。特殊卡价格见清单, 侦察机很贵, 只在情报价值明确时使用。",
+      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(如ScoutPlane)给bearingDeg指定侦查方向。特殊卡价格见清单, 侦察机很贵, 只在情报价值明确时使用。priority: 普通卡50; 紧急类卡(如'紧急转移'EmergencyRelocation)=100立即插队优先执行。",
       "parameters": {
         "type": "object",
         "properties": {
           "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" },
-          "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查方向方位角(炮塔原点, 北=0顺时针)" }
+          "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查方向方位角(炮塔原点, 北=0顺时针)" },
+          "priority": { "type": "number", "description": "0-100, 默认50; 紧急转移类=100" }
         },
         "required": ["cardId"]
       }
@@ -444,9 +445,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         if (cardId.Length == 0)
             return JsonSerializer.Serialize(new { error = "cardId required" });
         float? bearing = args.TryGetProperty("bearingDeg", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetSingle() : null;
+        var cardPriority = args.TryGetProperty("priority", out var pr) && pr.ValueKind == JsonValueKind.Number
+            ? Math.Clamp(pr.GetInt32(), 0, 100) : 50;
         // Preferred path: a DTO into FCS's own console coordinator (serialized with its
         // auto-buys). Legacy bridge-side physical routine only for stock FCS.
-        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing), 15_000)
+        var result = MainThread.Run(() => _mod.RequestCard(cardId, bearing, cardPriority), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });
     }

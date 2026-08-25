@@ -141,13 +141,17 @@ public class FcsGateway
     /// Returns null when the FCS build lacks the API — caller falls back to the legacy
     /// bridge-side physical routine.
     /// </summary>
-    public string? RequestCardPurchase(string cardId, float? bearingDeg)
+    public string? RequestCardPurchase(string cardId, float? bearingDeg, int priority = 50)
     {
         var fsc = ResolveFsc(out _, out _);
-        var method = fsc?.GetType().GetMethod("RequestConsoleCard", AnyInstance);
-        if (fsc == null || method == null)
-            return null;
-        return method.Invoke(fsc, new object[] { cardId, bearingDeg ?? 0f, bearingDeg.HasValue }) as string;
+        if (fsc == null) return null;
+        var withPriority = fsc.GetType().GetMethod("RequestConsoleCard", AnyInstance,
+            new[] { typeof(string), typeof(float), typeof(bool), typeof(int) });
+        if (withPriority != null)
+            return withPriority.Invoke(fsc, new object[] { cardId, bearingDeg ?? 0f, bearingDeg.HasValue, priority }) as string;
+        var legacy = fsc.GetType().GetMethod("RequestConsoleCard", AnyInstance,
+            new[] { typeof(string), typeof(float), typeof(bool) });
+        return legacy?.Invoke(fsc, new object[] { cardId, bearingDeg ?? 0f, bearingDeg.HasValue }) as string;
     }
 
     /// <summary>Latest completed console card-request outcome (patched FCS), for polling.</summary>
