@@ -26,6 +26,8 @@ public static class AgentConfig
         _llmControl = _category.CreateEntry("LlmControl", false, description: "Master switch: LLM is allowed to control fire missions (default off; F11 or panel button toggles)");
         _priorityQueue = _category.CreateEntry("PriorityQueue", false, description: "Optional: stage missions in a bridge-side queue (dispatch-time revalidation, FCS kept shallow). Default off — FCS has native priority ordering.");
         _fcsQueueDepth = _category.CreateEntry("FcsQueueDepth", 2, description: "Dispatch from the priority queue only while FCS pending tasks are below this");
+        _enableHttpApi = _category.CreateEntry("EnableHttpApi", false,
+            description: "Expose the local debug HTTP API (fire/draw/requisition endpoints). Keep OFF unless developing — RCE surface for local processes.");
         InitializePricing();
     }
 
@@ -42,6 +44,15 @@ public static class AgentConfig
     }
 
     public static int FcsQueueDepth => Math.Max(1, _fcsQueueDepth.Value);
+
+    private static MelonPreferences_Entry<bool> _enableHttpApi = null!;
+
+    /// <summary>
+    /// Debug HTTP API (127.0.0.1:17171). Default OFF: the endpoints can fire guns, buy
+    /// cards and draw on the map, so any local process — or a web page doing CSRF against
+    /// localhost — could drive the game. Enable only on a dev machine.
+    /// </summary>
+    public static bool EnableHttpApi => _enableHttpApi.Value;
 
     private static MelonPreferences_Entry<double> _priceInMiss = null!;
     private static MelonPreferences_Entry<double> _priceInHit = null!;

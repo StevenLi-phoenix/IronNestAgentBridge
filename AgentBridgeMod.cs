@@ -43,14 +43,21 @@ public class AgentBridgeMod : MelonMod
         AgentConfig.Initialize();
         RequisitionOperator.RequisitionLockProvider = () => _fcs.GetRequisitionLock();
         _agent = new FdoAgent(this);
-        _server = new BridgeServer(this);
-        try
+        if (AgentConfig.EnableHttpApi)
         {
-            _server.Start();
+            _server = new BridgeServer(this);
+            try
+            {
+                _server.Start();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[AgentBridge] failed to start HTTP server on port {BridgeServer.Port}: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+        else
         {
-            MelonLogger.Error($"[AgentBridge] failed to start HTTP server on port {BridgeServer.Port}: {ex.Message}");
+            MelonLogger.Msg("[AgentBridge] HTTP API disabled (EnableHttpApi=false)");
         }
     }
 
