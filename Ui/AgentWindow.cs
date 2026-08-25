@@ -66,10 +66,7 @@ public class AgentWindow
             FdoAgent.AgentState.Stopping => ("● STOPPING", new Color(1f, 0.55f, 0f)),
             _ => ("● STOPPED", Color.red),
         };
-        Add(stateText
-            + $"  {AgentConfig.Model}  staged:{mod.MissionQueue.Count}"
-            + $"  PQ:{(AgentConfig.PriorityQueue ? "开" : "关")}",
-            stateColor);
+        Add(stateText + $"  {AgentConfig.Model}", stateColor);
         Add($"状态: {agent.Status}");
         Add(UsageMeter.Summary);
         Add($"context: {UsageMeter.LastPromptTokens:N0} tokens");
@@ -77,10 +74,6 @@ public class AgentWindow
         foreach (var l in (mod.LastFcsSummary ?? "").Split('\n'))
             if (l.Length > 0)
                 Add(l);
-
-        var staged = mod.MissionQueue.Describe();
-        foreach (var s in staged.Take(4))
-            Add("  ⏳ " + s);
 
         if (agent.IsStreaming)
         {
@@ -108,7 +101,7 @@ public class AgentWindow
         }
 
         if (_buttonsBroken)
-            Add("按钮被游戏裁剪: F11=LLM开关 F7=优先队列 F9=全重置", Color.gray);
+            Add("按钮被游戏裁剪: F11=LLM开关 F9=全重置", Color.gray);
 
         var buttonRowH = 26f;
         var height = 30f + buttonRowH + lines.Count * LineH + 10f;
@@ -122,9 +115,7 @@ public class AgentWindow
         {
             if (Button(new Rect(box.x + 10f, y, 110f, 22f), running ? "停止 LLM" : "启动 LLM"))
                 mod.ToggleLlmControl();
-            if (Button(new Rect(box.x + 126f, y, 110f, 22f), $"优先队列:{(AgentConfig.PriorityQueue ? "开" : "关")}"))
-                AgentConfig.PriorityQueue = !AgentConfig.PriorityQueue;
-            if (Button(new Rect(box.x + 242f, y, 90f, 22f), "全重置"))
+            if (Button(new Rect(box.x + 126f, y, 90f, 22f), "全重置"))
                 mod.FullReset("panel button");
         }
         y += buttonRowH;

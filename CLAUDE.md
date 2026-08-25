@@ -6,7 +6,8 @@
   HUD 按 P 排序 + 紧急抢占（TryPreemptForUrgent）+ 声明炮塔标记（MapToken_TurretDeclared）。
 - **桥 DLL**：`Mods\` 里是 20:23 版（状态机 + EnableHttpApi 开关）；`bin\staging\` 有更新一版
   （`set_turret_position` 工具 + `POST /turret` + 青色炮塔标记创建），**待关游戏后拷入 Mods**。
-- cfg：`EnableHttpApi=true`、`PriorityQueue=false`（FCS 全量收任务）、`LlmControl=false`（F11 开）。
+- cfg：`EnableHttpApi=true`、`LlmControl=false`（F11 开）。桥内部暂存优先队列已整体移除
+  （FCS 原生优先队列是唯一队列）。
 - **待实测**：抢占（日志 grep "preempted"）、HUD P 排序显示、声明炮塔标记全流程、
   双线交汇修复（原 s 符号 bug）、侦察机购买后飞机实际飞行/揭雾效果。
 - **未决提议**：桥自身热重载改造（仿 FCS Host/Logic/ALC 拆分，中等规模重构）——用户未拍板。
@@ -27,7 +28,7 @@
 - FCS Logic 是热重载的：改 `IronNestFCS.Logic` 后落盘到 `UserData\IronNestFCS\` 即时生效（等价 F9）。
 - 配置在 `UserData\MelonPreferences.cfg` `[AgentBridge]`（ApiKey/模型/价格/开关）。
   **陷阱：绝不在游戏运行中手改 cfg**——游戏按内存值整文件重写（任何一次 Save 触发），
-  手改必被清。运行中改开关用热键/面板（F11 LLM、F12 优先队列），其余等关游戏再改文件。
+  手改必被清。运行中改开关用热键/面板（F11 LLM），其余等关游戏再改文件。
 
 ## 逆向工程结论（均实测验证）
 
@@ -74,7 +75,7 @@
 - 本游戏 IL2CPP 把 **GUILayout 全家**裁剪了（`GUILayout.Window`/`BeginArea` 全炸
   "Method unstripping failed"）。HUD 只能 `GUI.Box` + `GUI.Label` 手排坐标（FCS 同款）。
   `GUI.Button` 运行时探测，失败自动禁用回退热键。
-- 热键：F10 面板、F11 LLM 总控、F12 优先队列、F9 全重置（与 FCS 重置同键联动）。
+- 热键：F10 面板、F11 LLM 总控、F9 全重置（与 FCS 重置同键联动）。
 
 ## Agent 设计
 

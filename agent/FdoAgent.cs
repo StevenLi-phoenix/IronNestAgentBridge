@@ -420,8 +420,6 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             foreach (var t in s.Fcs.PendingTasks)
                 sb.AppendLine("  " + t);
         }
-        var staged = _mod.MissionQueue.Describe();
-        sb.AppendLine("内部优先队列(staged待下发, 勿重复): " + (staged.Count == 0 ? "(空)" : string.Join(" | ", staged)));
         foreach (var g in s.Guns)
             sb.AppendLine($"火炮{g.Side}: 膛={g.ChamberedShell ?? "空"} 药={g.PowderCharges} canFire={g.CanFire}");
         var shellNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -720,14 +718,6 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
         var stamp = DateTime.Now.ToString("HH:mm:ss");
         _firesThisRound++;
-
-        if (AgentConfig.PriorityQueue)
-        {
-            _mod.MissionQueue.Add(req, req.Priority, label);
-            AppendLog($"staged P{req.Priority} {label} ({req.Shell})", "staged", req);
-            lock (_gate) _history.Add($"[{stamp}] staged P{req.Priority} {label} {req.Shell}");
-            return JsonSerializer.Serialize(new { result = $"staged P{req.Priority}" });
-        }
 
         var result = MainThread.Run(() => _mod.QueueFireMission(req), 15_000).GetAwaiter().GetResult();
         AppendLog($"fire {label} ({req.Shell}, P{req.Priority}) -> {result}", "fire", new { req, result });

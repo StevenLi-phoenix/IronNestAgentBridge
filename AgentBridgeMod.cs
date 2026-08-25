@@ -25,8 +25,6 @@ public class AgentBridgeMod : MelonMod
     private BridgeServer? _server;
     private FdoAgent? _agent;
     private readonly AgentWindow _window = new();
-    public MissionQueue MissionQueue { get; } = new();
-    private float _nextDispatch;
 
     private float _nextBindAttempt;
     private float _nextMapPoll;
@@ -191,22 +189,12 @@ public class AgentBridgeMod : MelonMod
                     _window.Visible = !_window.Visible;
                 if (kb.f11Key.wasPressedThisFrame)
                     ToggleLlmControl();
-                // F7, not F12 — F12 is Steam's screenshot key and kept silently toggling this.
-                if (kb.f7Key.wasPressedThisFrame)
-                    AgentConfig.PriorityQueue = !AgentConfig.PriorityQueue;
                 // F9 is FCS's plan reset; ride the same semantic — full agent reset.
                 if (kb.f9Key.wasPressedThisFrame)
                     FullReset("F9");
             }
         }
         catch { }
-
-        if (now >= _nextDispatch)
-        {
-            _nextDispatch = now + 2f;
-            try { DispatchFromQueue(); }
-            catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] dispatch failed: {ex.Message}"); }
-        }
 
         if (now >= _nextCinematicCheck)
         {
@@ -304,7 +292,6 @@ public class AgentBridgeMod : MelonMod
         _agent?.ClearLog();
         EventLog.Clear(); // stale events must not replay into the restarted agent's fresh context
         _lastCardResult = "";
-        MissionQueue.Clear();
         _deployedMarkers.Clear();
         _map.Unbind();
         _impacts.Reset();
@@ -313,41 +300,6 @@ public class AgentBridgeMod : MelonMod
         TurretCalibrated = false;
         _lastPieceLocal = null;
         _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
-    }
-
-    /// <summary>
-    /// Drain the agent's priority queue into the FCS while its physical queue stays shallow.
-    /// Runs on the main thread. Re-validates each target at dispatch time.
-    /// </summary>
-    private void DispatchFromQueue()
-    {
-        if (!_map.IsBound || MissionQueue.Count == 0)
-            return;
-
-        var status = _fcs.ReadStatus();
-        if (!status.LogicLoaded || status.PendingCount >= AgentConfig.FcsQueueDepth)
-            return;
-
-        var slots = AgentConfig.FcsQueueDepth - status.PendingCount;
-        for (var i = 0; i < slots; i++)
-        {
-            var mission = MissionQueue.PopBest();
-            if (mission == null)
-                return;
-
-            // Dispatch-time revalidation: a staged entity strike is dropped if the target
-            // died or slipped back into fog while waiting.
-            if (!string.IsNullOrEmpty(mission.Request.EntityId) && _map.FindEntity(mission.Request.EntityId!) == null)
-            {
-                EventLog.Append("fcs_task_update", "fcs",
-                    $"staged mission on {mission.Label} dropped: target destroyed or no longer visible");
-                continue;
-            }
-
-            var result = QueueFireMission(mission.Request);
-            EventLog.Append("fcs_task_update", "fcs",
-                $"dispatched P{mission.Priority} {mission.Label} ({mission.Request.Shell}) -> {result}");
-        }
     }
 
     // ---- called from BridgeServer via MainThread.Run ----

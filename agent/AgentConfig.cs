@@ -12,8 +12,6 @@ public static class AgentConfig
     private static MelonPreferences_Entry<int> _maxTokens = null!;
     private static MelonPreferences_Entry<bool> _autoStart = null!;
     private static MelonPreferences_Entry<bool> _llmControl = null!;
-    private static MelonPreferences_Entry<bool> _priorityQueue = null!;
-    private static MelonPreferences_Entry<int> _fcsQueueDepth = null!;
 
     public static void Initialize()
     {
@@ -24,8 +22,6 @@ public static class AgentConfig
         _maxTokens = _category.CreateEntry("MaxTokens", 393216);
         _autoStart = _category.CreateEntry("AutoStart", true, description: "Start the FDO agent automatically once the scene binds");
         _llmControl = _category.CreateEntry("LlmControl", false, description: "Master switch: LLM is allowed to control fire missions (default off; F11 or panel button toggles)");
-        _priorityQueue = _category.CreateEntry("PriorityQueue", false, description: "Optional: stage missions in a bridge-side queue (dispatch-time revalidation, FCS kept shallow). Default off — FCS has native priority ordering.");
-        _fcsQueueDepth = _category.CreateEntry("FcsQueueDepth", 2, description: "Dispatch from the priority queue only while FCS pending tasks are below this");
         _enableHttpApi = _category.CreateEntry("EnableHttpApi", false,
             description: "Expose the local debug HTTP API (fire/draw/requisition endpoints). Keep OFF unless developing — RCE surface for local processes.");
         InitializePricing();
@@ -40,14 +36,6 @@ public static class AgentConfig
         get => _llmControl.Value;
         set { _llmControl.Value = value; MelonPreferences.Save(); }
     }
-
-    public static bool PriorityQueue
-    {
-        get => _priorityQueue.Value;
-        set { _priorityQueue.Value = value; MelonPreferences.Save(); }
-    }
-
-    public static int FcsQueueDepth => Math.Max(1, _fcsQueueDepth.Value);
 
     private static MelonPreferences_Entry<bool> _enableHttpApi = null!;
 
