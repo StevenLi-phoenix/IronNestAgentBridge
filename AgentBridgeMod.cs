@@ -748,7 +748,8 @@ public class AgentBridgeMod : MelonMod
                        "— rejected. 等在排任务结清、cancel低价值任务或换便宜弹种";
         }
 
-        var suffix = SurveyBlast(req.Shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire, out var ffRejection);
+        var suffix = SurveyBlast(req.Shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire,
+            out var ffRejection, out var hostilesInRadius);
         if (ffRejection != null)
             return ffRejection;
 
@@ -777,6 +778,16 @@ public class AgentBridgeMod : MelonMod
             motion = new Fcs.FcsGateway.MotionSpec(
                 (float)((m0.x - 10.016) / 3.8164), (float)((m0.y - 5.235) / 3.8164),
                 MathF.Sin(rad) * speedLocalPerSec, MathF.Cos(rad) * speedLocalPerSec, t0);
+        }
+
+        // Blind-fire tripwire (warning, not rejection — pre-planned denial fire is legal):
+        // a kill shell aimed at a point with no revealed hostile in its blast radius and no
+        // motion model is almost always the agent misusing ammo as reconnaissance.
+        if (!IsHarmlessShell(req.Shell) && string.IsNullOrEmpty(req.EntityId)
+            && hostilesInRadius == 0 && motion == null)
+        {
+            suffix += $"; ⚠盲射警告: {req.Shell}是杀伤弹而弹着半径内无已揭示敌目标——侦察盲射必须用STAR, " +
+                      "校射用DRIL; 只有明确的预判/封锁打击才允许杀伤弹盲射, 否则立即cancel_pending_task省下这笔钱";
         }
 
         // Pure aim-point enqueue: no physical marker is touched — the map tokens belong to
@@ -820,8 +831,13 @@ public class AgentBridgeMod : MelonMod
         shell != null && HarmlessShells.Contains(shell, StringComparer.OrdinalIgnoreCase);
 
     private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger, out string? rejection)
+        => SurveyBlast(shell, kmX, kmY, allowDanger, out rejection, out _);
+
+    private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger,
+        out string? rejection, out int hostilesInRadius)
     {
         rejection = null;
+        hostilesInRadius = 0;
         var suffix = "";
         if (IsHarmlessShell(shell))
             return suffix;
@@ -861,6 +877,7 @@ public class AgentBridgeMod : MelonMod
             suffix += $"; 警告: 已确认误伤风险, 友军在爆炸半径内: {string.Join(", ", friendliesInside)}";
         else if (friendliesNear.Count > 0)
             suffix += $"; 注意: 友军贴近弹着点(≤1.5×爆炸半径): {string.Join(", ", friendliesNear)}";
+        hostilesInRadius = hostilesCovered.Count;
         if (hostilesCovered.Count > 0)
             suffix += $"; 爆炸半径({blastKm * 1000f:F0}m)可同时覆盖: {string.Join(", ", hostilesCovered)}";
         return suffix;
