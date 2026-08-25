@@ -70,6 +70,10 @@ public class FcsStatusDto
     // Structured task refs (unique serial #N -> internal map-marker id) for marker
     // bookkeeping — display strings carry only #N and are never parsed.
     public Dictionary<int, int> SerialToMarker { get; set; } = new();
+    // Recent task outcomes (serial -> "Finished" | "Failed: reason") from the FCS recent
+    // list — how the bridge tells a fired shell apart from a failed task when a serial
+    // disappears from the live set.
+    public Dictionary<int, string> RecentOutcomes { get; set; } = new();
 }
 
 public class StateSnapshotDto

@@ -104,6 +104,24 @@ public class FcsGateway
                 }
         }
         catch { }
+        try
+        {
+            if (Get<System.Collections.IEnumerable>("RecentTasks") is { } recent)
+                foreach (var task in recent)
+                {
+                    try
+                    {
+                        var tt = task.GetType();
+                        if (tt.GetField("serial", AnyInstance)?.GetValue(task) is not int serial || serial <= 0)
+                            continue;
+                        var progress = tt.GetField("progress", AnyInstance)?.GetValue(task)?.ToString() ?? "";
+                        var reason = tt.GetField("failureReason", AnyInstance)?.GetValue(task) as string ?? "";
+                        dto.RecentOutcomes[serial] = progress == "Failed" ? $"Failed: {reason}" : progress;
+                    }
+                    catch { }
+                }
+        }
+        catch { }
         return dto;
     }
 

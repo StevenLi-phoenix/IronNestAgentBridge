@@ -435,11 +435,25 @@ public class AgentBridgeMod : MelonMod
 
         foreach (var serial in _deployedTasks.Keys.Where(s => !live.ContainsKey(s)).ToList())
         {
-            // The task left pending and both gun slots: the shell is in the air (or the task
-            // was cancelled — rare, agent-initiated, self-corrects on timeout). Track it so
-            // the agent doesn't re-queue a target whose shell is still flying.
             var dep = _deployedTasks[serial];
             _deployedTasks.Remove(serial);
+
+            // A serial that left the live set FAILED (dispenser broken, ballistic reject…)
+            // just as often as it fired — check the FCS recent-outcome list before booking
+            // an in-flight shell, or the agent waits on a shell that never left the barrel.
+            if (status.RecentOutcomes.TryGetValue(serial, out var outcome)
+                && outcome.StartsWith("Failed", StringComparison.Ordinal))
+            {
+                var why = outcome.Length > 8 ? outcome[8..] : "unknown";
+                EventLog.Append("fcs_task_update", "fcs",
+                    $"⚠任务失败(未发射): #{dep.Serial} {dep.Label} ({dep.Shell}) — {why}。" +
+                    "目标未被服务; 按失败原因处置(装药/射程问题就改打近目标或换弹, 而不是原样重排)");
+                continue;
+            }
+
+            // The task left pending and both gun slots with no failure record: the shell is
+            // in the air. Track it so the agent doesn't re-queue a target whose shell is
+            // still flying.
             _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup, FiredAtGame = EventLog.GameClock });
             EventLog.Append("shell_fired", "fcs",
                 $"炮弹出膛: #{dep.Serial} {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标{BalanceSuffix()}");
