@@ -465,6 +465,8 @@ public class AgentBridgeMod : MelonMod
 
         foreach (var (serial, task) in _deployedTasks.ToList())
         {
+            if (IsHarmlessShell(task.Shell))
+                continue;
             var blastKm = specs.FirstOrDefault(x => string.Equals(x.Id, task.Shell, StringComparison.OrdinalIgnoreCase))?.ImpactRadius ?? 0f;
             if (blastKm <= 0.001f)
                 continue;
@@ -774,10 +776,17 @@ public class AgentBridgeMod : MelonMod
     /// returned suffix so the LLM can verify a merged strike actually covers its cluster.
     /// Unknown shell (null/unmatched) surveys nothing — empty suffix, no rejection.
     /// </summary>
+    /// <summary>Shells with no harmful effect — exempt from every IFF check (smoking your own
+    /// positions for concealment is legitimate doctrine).</summary>
+    private static bool IsHarmlessShell(string? shell) =>
+        string.Equals(shell, "SMK", StringComparison.OrdinalIgnoreCase);
+
     private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger, out string? rejection)
     {
         rejection = null;
         var suffix = "";
+        if (IsHarmlessShell(shell))
+            return suffix;
         var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, shell, StringComparison.OrdinalIgnoreCase));
         var blastKm = spec?.ImpactRadius ?? 0f; // ShellDefinition.ImpactRadius is already km (HE=0.25)
         if (blastKm <= 0.001f)
