@@ -51,7 +51,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   同一目标若有"方位角+距离"组合优先用它, 且优先选距目标近的观测员的数据。
 - 试射修正(registration): shell_impact事件给出**实际弹着点**。与你的预期弹着对比:
   若多发呈现**一致的系统性偏移向量**, 说明假定炮位有误——把偏移向量反向加到当前
-  假定炮位上(用solve_target/坐标运算), set_turret_position修正, 后续所有射击自动归正。
+  假定炮位上(用solve_target/坐标运算), set_assumed_turret_position修正, 后续所有射击自动归正。
   随机散布(每发偏向不同)则是正常弹道误差, 不要修炮位。
 - 弹药成本(征用点): STAR=2, HE/AP=18。因此侦察性盲射一律用STAR——它的任务是照亮/
   揭示区域, 不是摧毁; 用AP/HE盲射等于花9倍的钱赌一发不准的弹。只有对已揭示目标
@@ -95,7 +95,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   {
     "type": "function",
     "function": {
-      "name": "set_turret_position",
+      "name": "set_assumed_turret_position",
       "description": "把指挥桌上的炮塔棋子移动到指定位置。FCS与所有解算以棋子位置为射击原点。合法校准依据: (1)统帅部电文中的铁巢网格('铁巢 - [GRID]'或阵地转移宣告的新网格); (2)战场/侦查报告中可反解算出炮位的观测数据(先用solve_target解出炮位坐标)。两者都没有时**禁止调用本工具**——保持未校准等待, 绝不猜测坐标。",
       "parameters": {
         "type": "object",
@@ -543,7 +543,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             return JsonSerializer.Serialize(new
             {
                 unreliable = true,
-                note = "假定炮塔位置在地图之外, 不可信。用其他信息(统帅部电文的铁巢网格/侦查报告反定位)重新set_turret_position。",
+                note = "假定炮塔位置在地图之外, 不可信。用其他信息(统帅部电文的铁巢网格/侦查报告反定位)重新set_assumed_turret_position。",
             });
 
         return JsonSerializer.Serialize(new
@@ -618,7 +618,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 "grid_to_km" => GridMath.GridToKm(args, turretKm),
                 "solve_target" => SolveAndPlot(args),
                 "requisition_card" => ExecuteRequisition(args, snapshot),
-                "set_turret_position" => ExecuteSetTurret(args, turretKm),
+                "set_assumed_turret_position" or "set_turret_position" => ExecuteSetTurret(args, turretKm),
                 "cancel_pending_task" => ExecuteCancelPending(args),
                 "get_assumed_turret_position" or "get_turret_position" => ExecuteGetTurret(),
                 "firing_solution" => ExecuteFiringSolution(args),
