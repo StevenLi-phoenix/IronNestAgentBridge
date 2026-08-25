@@ -110,9 +110,10 @@ public static class GridMath
             target = directs[0];
         else if (lines.Count >= 2)
         {
-            if (IntersectLines(lines[0], lines[1]) is not { } hit)
-                return Error("observation lines are parallel or diverge (no forward intersection)");
-            target = hit;
+            var (hit, reason) = IntersectLinesDetailed(lines[0], lines[1]);
+            if (hit is not { } h)
+                return Error(reason);
+            target = h;
         }
         else if (lines.Count == 1 && circles.Count >= 1)
         {
@@ -147,7 +148,7 @@ public static class GridMath
         return (p.x + Math.Sin(rad) * distanceKm, p.y + Math.Cos(rad) * distanceKm);
     }
 
-    private static (double x, double y)? IntersectLines(
+    private static ((double x, double y)? hit, string reason) IntersectLinesDetailed(
         ((double x, double y) p, double bearing) a, ((double x, double y) p, double bearing) b)
     {
         var (ax, ay) = a.p;
@@ -155,13 +156,17 @@ public static class GridMath
         var (adx, ady) = Dir(a.bearing);
         var (bdx, bdy) = Dir(b.bearing);
         var det = adx * -bdy - ady * -bdx;
-        if (Math.Abs(det) < 1e-9) return null;
+        if (Math.Abs(det) < 1e-9)
+            return (null, "observation lines are parallel (bearings equal or opposite)");
         var rx = bx - ax;
         var ry = by - ay;
         var t = (rx * -bdy - ry * -bdx) / det;
-        var s = (adx * ry - ady * rx) / -det;
-        if (t < 0 || s < 0) return null; // both observers look forward along their bearing
-        return (ax + adx * t, ay + ady * t);
+        var s = (adx * ry - ady * rx) / det;
+        var point = (ax + adx * t, ay + ady * t);
+        if (t < 0 || s < 0)
+            return (null, $"lines only cross BEHIND {(t < 0 ? "the first" : "the second")} observer, at {Fmt(point)} km — " +
+                          "a bearing is probably reversed (±180°) or an observer point is wrong; do not retry the same inputs");
+        return (point, "");
     }
 
     private static List<(double x, double y)> IntersectLineCircle(
