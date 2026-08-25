@@ -91,6 +91,9 @@ public class StateSnapshotDto
     public List<CardDto> Cards { get; set; } = new();
     // Requisition-point balance at snapshot time — every purchase (shell or card) draws on it.
     public int? RequisitionPoints { get; set; }
+    // Active Unity scene name — the mode discriminator: "Mission Chill"/"Mission Challenging"
+    // are the endless modes, "MissionBase" hosts scripted missions, "Mission tutorial N" tutorials.
+    public string? SceneName { get; set; }
     public List<ShellSpecDto> ShellSpecs { get; set; } = new();
     // Shells fired but not yet landed: gone from the FCS queue and the gun slots, yet their
     // targets are already served — re-queuing them double-spends ammunition.

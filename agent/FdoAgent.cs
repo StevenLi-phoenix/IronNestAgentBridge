@@ -76,7 +76,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   这是最便宜的争时手段: 已揭示的敌FDC永远是priority>=90的最优先目标, 倒计时紧张而敌炮
   一时够不着时, 优先找FDC打(注意只是**暂停**, 敌方恢复指挥后倒计时继续, 用换来的时间
   摧毁敌炮或转移); ②摧毁敌炮兵本身(fire priority>=90)——**任务模式里敌炮打光=倒计时彻底
-  停止(根治); 无尽模式里每毁一门延长倒计时**(买时间, 敌方会补炮, 威胁不会消失); ③**MoveZone
+  停止(根治); 无尽模式里每毁一门延长倒计时**(买时间, 敌方会补炮, 威胁不会消失)——当前是哪种
+  模式看快照首部的"作战模式"行, 无尽模式下反炮兵是持续管理项而非一次性解决; ③**MoveZone
   紧急转移**(约65点,
   无输入, priority=100)——摆脱敌方火力解算的最后手段。**注意: MoveDirection定向移动不会暂停/
   重置反炮兵倒计时**, 它不是逃生手段。MoveZone落点不可预知, 转移后必须重新校准(买LocationReport)。
@@ -589,6 +590,15 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         // position must come from the wire + its own calibration, or it echoes whatever
         // value the system shows (observed failure mode). Calibration is tracked as an
         // ACT this mission (tool call or detected manual drag), not inferred from position.
+        if (!string.IsNullOrEmpty(s.SceneName))
+            sb.AppendLine("作战模式: " + s.SceneName switch
+            {
+                "Mission Chill" => "无尽模式(Chill)——敌军无限补充; 摧毁敌炮只延长反炮击倒计时, 不能根治",
+                "Mission Challenging" => "无尽模式(Challenging)——敌军无限补充; 摧毁敌炮只延长反炮击倒计时, 不能根治",
+                "MissionBase" => "剧本任务——敌军编制有限; 敌炮全灭=反炮击倒计时彻底停止",
+                var t when t!.StartsWith("Mission tutorial") => $"教程关({t})",
+                var other => $"未知场景 '{other}' (按剧本任务处置)",
+            });
         if (!string.IsNullOrEmpty(s.MapExtentKm))
             sb.AppendLine($"本关地图实测范围: {s.MapExtentKm} — 瞄准点出界会被fire拒绝; 规划盲射/侦察航线前先对照此范围");
         sb.AppendLine(s.TurretCalibrated

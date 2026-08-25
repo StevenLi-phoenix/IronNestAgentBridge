@@ -158,6 +158,9 @@
 - 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
   → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
   购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
+- 作战模式判别：活动场景名（快照 `SceneName`）——`Mission Chill`/`Mission Challenging`=无尽
+  （Gamemodes 枚举同名），`MissionBase`=剧本任务，`Mission tutorial N`=教程；快照文本"作战模式"
+  行连同反炮兵含义一起给 agent（无尽=毁炮只延时，剧本=全灭停表）。
   **下单预算门**（仅桥侧，FCS 不管账）：QueueFireMission 拒绝 弹价+队列在排任务占款>余额
   （在排=serial 在 PendingTasks 里的 _deployedTasks，炮位上的视为已扣款）；RequestCard 拒绝
   卡价>余额。cost 读不到（0）时放行——宁可漏拦不可误拦。

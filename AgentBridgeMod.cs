@@ -567,6 +567,7 @@ public class AgentBridgeMod : MelonMod
         };
         snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
         snapshot.RequisitionPoints = AmmoReader.ReadRequisitionPoints();
+        try { snapshot.SceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch { }
         var cardIds = new HashSet<string>(snapshot.AvailableShells, StringComparer.OrdinalIgnoreCase);
         snapshot.ShellSpecs = AmmoReader.ReadShellSpecs().Where(s => cardIds.Contains(s.Id)).ToList();
         snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);
