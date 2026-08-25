@@ -29,6 +29,10 @@ public static class AgentConfig
         _enableHttpApi = _category.CreateEntry("EnableHttpApi", false,
             description: "Expose the local debug HTTP API (fire/draw/requisition endpoints). Keep OFF unless developing — RCE surface for local processes.");
         InitializePricing();
+
+        // The agent is ALWAYS stopped on boot: LLM control is a per-session act (F11 /
+        // panel), never resumed from a previous session's persisted value.
+        _llmControl.Value = false;
     }
 
     public static bool LlmControl

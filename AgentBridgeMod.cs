@@ -158,12 +158,6 @@ public class AgentBridgeMod : MelonMod
         }
         catch { }
 
-        if (!_autoStartDone && _map.IsBound && AgentConfig.AutoStart && AgentConfig.LlmControl && _agent is { IsRunning: false })
-        {
-            _autoStartDone = true;
-            _agent.Start();
-        }
-
         if (now >= _nextDispatch)
         {
             _nextDispatch = now + 2f;
