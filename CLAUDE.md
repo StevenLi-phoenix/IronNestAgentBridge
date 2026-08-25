@@ -39,7 +39,9 @@
 - cfg：`EnableHttpApi=true`、`LlmControl=false`（F11 开）。
 - **待实测**：号角关键词是否命中（无匹配时日志打全量交互件清单，据此补关键词）；
   LocationReport 回报电文格式（绝对网格 vs 相对方位距离）；HCHE 合并打击行为；
-  跟瞄 [FCS Track] 日志链（pre-aim analytic / pre-fire correction）。
+  跟瞄 [FCS Track] 日志链（pre-aim analytic / pre-fire correction）；
+  Spotter 卡输入控件与回报电文格式（1 点，买一张即知）；MoveDirection/LE/DRIL 语义；
+  本关地图实测范围日志（[AgentBridge] sheet extent）是否与目测图幅一致。
 - **未决提议**：桥自身热重载改造（仿 FCS Host/Logic/ALC 拆分，中等规模重构）——用户未拍板。
 
 独立 MelonLoader mod：把 *Iron Nest: Heavy Turret Simulator* 的战场信息与 IronNestFCS Smart
@@ -117,9 +119,13 @@
   `DialToSplitFlipDisplayBinder`，父名含 "Location L"/"Location N"，SetFlapDialSymbol 驱动）。
 - 实测卡 ID：`ScoutPlane`（侦察机，航程约 12 格，bearingDeg+startGrid）；
   `LocationReport`（位置报告约 3 点，**必须 startGrid 网格输入**，电文回报炮位=校准依据）；
-  `MoveZone`（紧急转移约 65 点，无输入，P100）。价格每局浮动，读实价。
-- 并发：卡片购买走 FCS 的 ConsoleCardRequest DTO 优先级队列（ConsoleCardRequestLoop 串行
-  执行），桥经 `FSC.RequestConsoleCard(...)` 提交，不再自持锁。
+  `MoveZone`（紧急转移约 65 点，无输入，P100）；`Spotter`（前线观察员，**实测 ID/1 点**，
+  经 GET /console 活体确认——输入/回报格式待实测，学说按"startGrid 部署持续观察哨、电文回传
+  观测"写入）。同局还实测到 `MoveDirection`（10 点，语义未知）和新弹种 `LE`（8 点，爆半径
+  150m）、`DRIL`（3 点，爆半径仅 70m，疑似钻地/精确弹）——语义待实测，弹种自动进
+  ShellSpecs/成本表。价格每局浮动，读实价。
+- 并发：卡片购买走 FCS 的 ConsoleCardRequest DTO 优先级队列（入队即踢按需排空协程），
+  桥经 `FSC.RequestConsoleCard(...)` 提交，不再自持锁。
 - **陷阱：`ShellDefinition.ImpactRadius` 单位是 km**（HE=0.25、HCHE=0.55、AP=0.15）。
   曾按米处理导致快照显示"爆半径0m"、友军拦截/覆盖名单形同虚设。
 
