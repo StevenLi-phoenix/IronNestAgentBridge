@@ -776,10 +776,15 @@ public class AgentBridgeMod : MelonMod
     /// returned suffix so the LLM can verify a merged strike actually covers its cluster.
     /// Unknown shell (null/unmatched) surveys nothing — empty suffix, no rejection.
     /// </summary>
-    /// <summary>Shells with no harmful effect — exempt from every IFF check (smoking your own
-    /// positions for concealment is legitimate doctrine).</summary>
+    /// <summary>
+    /// Shells with no harmful effect — exempt from every IFF check: SMK (screening),
+    /// STAR (illumination), TEAR (reveal, zero damage), DRIL (inert training round).
+    /// WP stays checked until its suppression/incendiary mechanics are confirmed harmless.
+    /// </summary>
+    private static readonly string[] HarmlessShells = { "SMK", "STAR", "TEAR", "DRIL" };
+
     private static bool IsHarmlessShell(string? shell) =>
-        string.Equals(shell, "SMK", StringComparison.OrdinalIgnoreCase);
+        shell != null && HarmlessShells.Contains(shell, StringComparer.OrdinalIgnoreCase);
 
     private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger, out string? rejection)
     {
