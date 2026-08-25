@@ -115,6 +115,16 @@ public class BridgeServer
                 TryWrite(ctx, 200, new { result });
                 break;
             }
+            case ("POST", "/requisition"):
+            {
+                var req = ReadBody<RequisitionRequest>(ctx);
+                if (req?.CardId == null) { TryWrite(ctx, 400, new { error = "need {cardId, bearingDeg?}" }); break; }
+                var result = MainThread.Run(() =>
+                    GameState.RequisitionOperator.StartPurchase(req.CardId!, req.BearingDeg, null), 15_000)
+                    .GetAwaiter().GetResult();
+                TryWrite(ctx, 200, new { result });
+                break;
+            }
             case ("GET", "/console"):
             {
                 var info = MainThread.Run(() => GameState.RequisitionOperator.InspectConsole()).GetAwaiter().GetResult();
@@ -160,6 +170,12 @@ public class BridgeServer
     {
         public string? Which { get; set; }
         public string[]? Lines { get; set; }
+    }
+
+    private class RequisitionRequest
+    {
+        public string? CardId { get; set; }
+        public float? BearingDeg { get; set; }
     }
 
     private class ScoutPlaneRequest
