@@ -147,6 +147,12 @@ public class BridgeServer
                 TryWrite(ctx, 200, info);
                 break;
             }
+            case ("POST", "/horn"):
+            {
+                var result = MainThread.Run(() => _mod.PullSignalHorn()).GetAwaiter().GetResult();
+                TryWrite(ctx, 200, new { result });
+                break;
+            }
             case ("POST", "/scoutplane"):
             {
                 var req = ReadBody<ScoutPlaneRequest>(ctx);
