@@ -71,10 +71,13 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     **不需要已揭示**, 不在entities[]是正常的, 不要因此犹豫或改用别的方式。
   * 被跟踪目标进雾后模型继续外推(约90s后标记不可靠); 不要为同一移动目标叠加多发,
     等弹着评估。
-- 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
-  只有两条出路: 摧毁敌炮兵(fire priority>=90)或**MoveZone紧急转移**(约65点, 无输入,
-  priority=100)——只有它能摆脱敌方火力解算。**注意: MoveDirection定向移动不会暂停/重置
-  反炮兵倒计时**, 它不是逃生手段。MoveZone落点不可预知, 转移后必须重新校准(买LocationReport)。
+- 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。应对手段按代价排序:
+  ①**击毁任一敌方FDC(火控指挥所)可暂时暂停倒计时**——敌炮群失去指挥就打不了协同齐射,
+  这是最便宜的争时手段: 已揭示的敌FDC永远是priority>=90的最优先目标, 倒计时紧张而敌炮
+  一时够不着时, 优先找FDC打(注意只是**暂停**, 敌方恢复指挥后倒计时继续, 用换来的时间
+  摧毁敌炮或转移); ②摧毁敌炮兵本身(fire priority>=90), 根治; ③**MoveZone紧急转移**(约65点,
+  无输入, priority=100)——摆脱敌方火力解算的最后手段。**注意: MoveDirection定向移动不会暂停/
+  重置反炮兵倒计时**, 它不是逃生手段。MoveZone落点不可预知, 转移后必须重新校准(买LocationReport)。
 - 定向移动(MoveDirection卡, 约10点, bearingDeg+distanceKm): 常规再部署——目标超出射程时
   拉近距离、或占领更好阵位。新炮位可推算=旧炮位+方向×距离, 移动完成后直接
   set_assumed_turret_position到推算点, 不用买LocationReport。反炮兵威胁下无逃生价值(见上)。

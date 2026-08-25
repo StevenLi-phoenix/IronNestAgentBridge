@@ -127,7 +127,9 @@
   `DialToSplitFlipDisplayBinder`，父名含 "Location L"/"Location N"，SetFlapDialSymbol 驱动）。
 - 实测卡 ID：`ScoutPlane`（侦察机，航程约 12 格，bearingDeg+startGrid）；
   `LocationReport`（位置报告约 3 点，**必须 startGrid 网格输入**，电文回报炮位=校准依据）；
-  `MoveZone`（紧急转移约 65 点，无输入，P100，落点不可预知→转移后必须 LocationReport 重校准）；
+  `MoveZone`（紧急转移约 65 点，无输入，P100，落点不可预知→转移后必须 LocationReport 重校准）——
+  反炮兵机制补充：**击毁任一敌方 FDC 可暂时暂停反炮击倒计时**（敌炮群失指挥；只是暂停不是重置，
+  恢复指挥后继续走），最便宜的争时手段，学说里排在摧毁敌炮/MoveZone 之前；
   `Spotter`（前线观测员 FO，1 点，**startGrid 部署格**，报告离部署点最近敌军的情报，电文回传）；
   `MoveDirection`（定向移动，10 点，**bearingDeg+distanceKm**：令铁巢向指定方向移动设定距离，
   常规再部署用——**不会暂停/重置反炮兵倒计时，不是逃生手段**（实测确认）；新炮位=旧炮位+
