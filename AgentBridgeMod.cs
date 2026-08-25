@@ -642,7 +642,7 @@ public class AgentBridgeMod : MelonMod
         // the mission (soft — allowDangerouslyFriendlyFire overrides); visible hostiles inside it are
         // reported back so the LLM can verify a merged strike actually covers its cluster.
         var suffix = "";
-        var blastKm = (spec?.ImpactRadius ?? 0f) / 1000f;
+        var blastKm = spec?.ImpactRadius ?? 0f; // ShellDefinition.ImpactRadius is already km (HE=0.25)
         if (blastKm > 0.001f)
         {
             var friendliesInside = new List<string>();

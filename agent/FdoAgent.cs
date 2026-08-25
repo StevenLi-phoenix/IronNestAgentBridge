@@ -47,6 +47,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 合并打击(一发多杀): 排任务前先算目标间距——多个软目标彼此相距不超过弹药爆炸半径
   (见弹药规格表)时, **一发瞄准目标群的几何中点**(用target坐标点名中点)即可全灭,
   严禁逐个各排一发浪费弹药与炮位(例: 两个步兵组相距0.1km, 一发HE覆盖两者)。
+  群间距超出HE半径但在HCHE半径内时, 换HCHE合并而不是拆成多发HE。
   fire成功回执会列出"爆炸半径可同时覆盖"的目标名单——用它核对合并是否成立,
   没被覆盖到的目标才单独排任务。
 - 友军安全: 弹着点爆炸半径内有友军/平民(role含Ally/Spotter/civilian)时fire会拒绝并警告。
@@ -101,9 +102,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   大致方位和距离提示。注意: 方位角有误差(实为一个方向范围), 距离数字也不精确, 且
   误差有多大不可知——两者都严禁当作解算输入。只做定性修正: 下一发沿提示方向、按
   提示距离的量级移动瞄点再试射, 逐发收敛（或者使用侦察）。"弹着确认命中"(无箭头)说明爆炸半径内已有目标。
-- 弹药成本(征用点): STAR=2, HE/AP=18。因此侦察性盲射一律用STAR——它的任务是照亮/
-  揭示区域, 不是摧毁; 用AP/HE盲射等于花9倍的钱赌一发不准的弹。只有对已揭示目标
-  (entityId)才花HE/AP做摧毁性射击。例外: 统帅部明确限制弹种时从其指令。
+- 弹药成本(征用点, **实价以本局清单为准**): 侦察弹(STAR/SMK, 通常2点)比杀伤弹便宜一个
+  量级——侦察性盲射一律用STAR, 它的任务是照亮/揭示, 不是摧毁; 用杀伤弹盲射等于花几倍
+  的钱赌一发不准的弹。只有对已揭示目标(entityId)才用杀伤弹。**杀伤弹之间按性价比选**:
+  对照规格表算"每点覆盖面积/伤害"——如HCHE爆炸半径(550m)约为HE(250m)的2.2倍、覆盖面积
+  近5倍, 单价通常不到2倍: 目标群、合并打击、需要容错半径的场合**优先HCHE而不是连发HE**;
+  单个小目标才用HE省钱。例外: 统帅部明确限制弹种时从其指令。
 - 开火: 用 **fire 工具**, 每个目标一次调用, 一轮内可连续多次。目标三选一:
   entityId(逐字来自entities[]) / target(坐标点名, 盲射首选) / bearingDeg+distanceKm。
   坐标(target)优于bearing/distance: 诸元入队时按炮塔棋子实时位置推导, 校准后自动正确。
@@ -510,7 +514,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 var ranges = spec.ChargeRanges.Count > 0
                     ? string.Join(" ", spec.ChargeRanges.OrderBy(c => c.Charge).Select(c => $"C{c.Charge}:{c.MinKm:F1}-{c.MaxKm:F1}km"))
                     : "射程表未知";
-                sb.AppendLine($"  {spec.Id}: 爆半径{spec.ImpactRadius:F0}m 伤害{spec.Damage}"
+                sb.AppendLine($"  {spec.Id}: 爆半径{spec.ImpactRadius * 1000f:F0}m 伤害{spec.Damage}"
                               + (spec.ProjectilesPerShell > 1 ? $"×{spec.ProjectilesPerShell}弹" : "")
                               + $" {ranges}");
             }
