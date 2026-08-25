@@ -1,5 +1,16 @@
 # IronNestAgentBridge — 项目知识库
 
+## 当前状态（2026-08-24 会话交接）
+
+- **FCS Logic**（`UserData\IronNestFCS\`）已是最新热部署：priority 队列 + 击发顺序优先级 +
+  HUD 按 P 排序 + 紧急抢占（TryPreemptForUrgent）+ 声明炮塔标记（MapToken_TurretDeclared）。
+- **桥 DLL**：`Mods\` 里是 20:23 版（状态机 + EnableHttpApi 开关）；`bin\staging\` 有更新一版
+  （`set_turret_position` 工具 + `POST /turret` + 青色炮塔标记创建），**待关游戏后拷入 Mods**。
+- cfg：`EnableHttpApi=true`、`PriorityQueue=false`（FCS 全量收任务）、`LlmControl=false`（F11 开）。
+- **待实测**：抢占（日志 grep "preempted"）、HUD P 排序显示、声明炮塔标记全流程、
+  双线交汇修复（原 s 符号 bug）、侦察机购买后飞机实际飞行/揭雾效果。
+- **未决提议**：桥自身热重载改造（仿 FCS Host/Logic/ALC 拆分，中等规模重构）——用户未拍板。
+
 独立 MelonLoader mod：把 *Iron Nest: Heavy Turret Simulator* 的战场信息与 IronNestFCS Smart
 火控暴露为本地 HTTP API + 内置 LLM agent（DeepSeek），让 LLM 担任射击指挥官。
 与 FCS 解耦（仅反射对接）；FCS fork 在 `C:\Users\stevenli\Codes\IronNestFCS-Smart`（已加 priority 补丁）。
