@@ -193,7 +193,8 @@ public class AgentBridgeMod : MelonMod
         }
     }
 
-    private readonly HashSet<int> _deployedMarkers = new();
+    // marker id -> the target label its current mission covers (entityId or bearing/distance)
+    private readonly Dictionary<int, string> _deployedMarkers = new();
     private static readonly System.Text.RegularExpressions.Regex TaskIdRe =
         new(@"^T(\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -216,11 +217,21 @@ public class AgentBridgeMod : MelonMod
         foreach (var t in status.PendingTasks)
             Scan(t);
 
-        foreach (var id in _deployedMarkers.Where(id => !inUse.Contains(id)).ToList())
+        foreach (var id in _deployedMarkers.Keys.Where(id => !inUse.Contains(id)).ToList())
         {
             if (_map.ReturnMarkerHome(id))
                 _deployedMarkers.Remove(id);
         }
+    }
+
+    /// <summary>Append the covered target's label to FCS task strings so the agent can correlate.</summary>
+    private string? AnnotateTask(string? desc)
+    {
+        if (desc == null) return null;
+        var m = TaskIdRe.Match(desc);
+        if (m.Success && int.TryParse(m.Groups[1].Value, out var id) && _deployedMarkers.TryGetValue(id, out var label))
+            return $"{desc} → {label}";
+        return desc;
     }
 
     public void ToggleLlmControl()
@@ -302,6 +313,9 @@ public class AgentBridgeMod : MelonMod
             Cards = AmmoReader.ReadCards(),
         };
         snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
+        snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);
+        snapshot.Fcs.RightTask = AnnotateTask(snapshot.Fcs.RightTask);
+        snapshot.Fcs.PendingTasks = snapshot.Fcs.PendingTasks.Select(t => AnnotateTask(t)!).ToList();
         if (_map.IsBound)
         {
             var turretLocal = _map.TurretLocalOnMap();
@@ -377,7 +391,7 @@ public class AgentBridgeMod : MelonMod
             var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority);
             if (result == "ok")
             {
-                _deployedMarkers.Add(markerId);
+                _deployedMarkers[markerId] = label;
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as marker {markerId}");
             }
