@@ -252,8 +252,9 @@ public class AgentBridgeMod : MelonMod
             Teleprinters = _telegraph.ReadAll(),
             Guns = GunStateReader.ReadBoth(),
             Fcs = _fcs.ReadStatus(),
-            AvailableShells = AmmoReader.ReadAvailableShells(),
+            Cards = AmmoReader.ReadCards(),
         };
+        snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
         if (_map.IsBound)
         {
             var turretLocal = _map.TurretLocalOnMap();

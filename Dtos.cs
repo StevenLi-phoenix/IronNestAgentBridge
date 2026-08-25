@@ -82,6 +82,15 @@ public class StateSnapshotDto
     public FcsStatusDto Fcs { get; set; } = new();
     // Shell punchcards physically present on the requisition console — the only buyable types this mission.
     public List<string> AvailableShells { get; set; } = new();
+    public List<CardDto> Cards { get; set; } = new();
+}
+
+public class CardDto
+{
+    public string Id { get; set; } = "";
+    public int Cost { get; set; }
+    public int RemainingUses { get; set; }
+    public bool IsRecon { get; set; }
 }
 
 public class BridgeEvent

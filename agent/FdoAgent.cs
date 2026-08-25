@@ -90,13 +90,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "在征用台上插入指定打孔卡、设置卡片旋钮、按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(recon)必须同时给bearingDeg和distanceKm: 以炮塔为原点的极坐标, 指定侦察机起始位置与侦查方向, 飞机会沿该方向揭开侦查条带。",
+      "description": "在征用台上插入指定打孔卡、设置卡片旋钮、按下购买按钮(物理操作, 与FCS共享控制台锁自动排队)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。侦察机卡(如ScoutPlane)给bearingDeg指定侦查方向, 飞机沿该方向揭开侦查条带; 距离/起始位置游戏不可选, 无此参数。特殊卡价格见清单, 侦察机很贵, 只在情报价值明确时使用。",
       "parameters": {
         "type": "object",
         "properties": {
           "cardId": { "type": "string", "description": "卡片ID, 见征用台可购清单" },
-          "bearingDeg": { "type": "number", "description": "侦察类卡: 方位角(炮塔原点, 北=0顺时针)" },
-          "distanceKm": { "type": "number", "description": "侦察类卡: 距离km" }
+          "bearingDeg": { "type": "number", "description": "侦察类卡: 侦查方向方位角(炮塔原点, 北=0顺时针)" }
         },
         "required": ["cardId"]
       }
@@ -306,12 +305,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             "AP","APHE","ATMC","CLMN","CYAN","DRIL","EQKE","FLCH","HCHE","HE",
             "INCN","LE","PLCM","PCLM","PHGN","PRPG","SMK","STAR","TEAR","THRM","WP",
         };
-        var shells = s.AvailableShells.Where(x => shellNames.Contains(x)).ToList();
-        var specials = s.AvailableShells.Where(x => !shellNames.Contains(x)).ToList();
-        sb.AppendLine("征用台可购弹种(开火只能从此选, 清单外弹种购买必败): "
-                      + (shells.Count == 0 ? "(未就绪)" : string.Join(", ", shells)));
+        string CardLabel(CardDto c) => $"{c.Id}({c.Cost}点{(c.RemainingUses > 0 ? $", 余{c.RemainingUses}次" : "")})";
+        var shells = s.Cards.Where(x => shellNames.Contains(x.Id)).ToList();
+        var specials = s.Cards.Where(x => !shellNames.Contains(x.Id)).ToList();
+        sb.AppendLine("征用台可购弹种及单价(开火只能从此选, 清单外弹种购买必败): "
+                      + (shells.Count == 0 ? "(未就绪)" : string.Join(", ", shells.Select(CardLabel))));
         if (specials.Count > 0)
-            sb.AppendLine("征用台特殊卡(仅经requisition_card工具使用, 不是弹种): " + string.Join(", ", specials));
+            sb.AppendLine("征用台特殊卡及单价(仅经requisition_card工具使用, 不是弹种, 注意贵价卡值不值得花): "
+                          + string.Join(", ", specials.Select(CardLabel)));
         sb.AppendLine("可见实体(entityId必须逐字取自此表):");
         if (s.Entities.Count == 0)
             sb.AppendLine("  (无 — 没有任何目标被揭示)");
@@ -375,10 +376,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
         if (cardId.Length == 0)
             return JsonSerializer.Serialize(new { error = "cardId required" });
         float? bearing = args.TryGetProperty("bearingDeg", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetSingle() : null;
-        float? distance = args.TryGetProperty("distanceKm", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetSingle() : null;
         // The console is arbitrated by FCS's shared CoroutineLock; our purchase queues behind
-        // any in-flight FCS auto-buy, so no idle gate is needed.
-        var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId, bearing, distance), 15_000)
+        // any in-flight FCS auto-buy, so no idle gate is needed. Distance is not player-selectable.
+        var result = MainThread.Run(() => GameState.RequisitionOperator.StartPurchase(cardId, bearing, null), 15_000)
             .GetAwaiter().GetResult();
         return JsonSerializer.Serialize(new { result });
     }
