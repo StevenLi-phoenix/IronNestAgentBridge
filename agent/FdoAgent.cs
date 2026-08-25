@@ -137,7 +137,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "get_assumed_turret_position",
-      "description": "查询**当前假定的**炮塔位置(=指挥桌棋子的位置, 不是ground truth)。返回km坐标+网格; unplaced=true表示棋子还停在地图原点未校准。",
+      "description": "查询**当前假定的**炮塔位置(=指挥桌棋子的位置, 不是ground truth)。返回km坐标+网格。",
       "parameters": { "type": "object", "properties": {} }
     }
   },
