@@ -380,6 +380,10 @@ public class AgentBridgeMod : MelonMod
     {
         if (!Agent.GridMath.InMapBounds((kmX, kmY)))
             return $"km({kmX:F1},{kmY:F1}) is outside the map — rejected (check the grid conversion)";
+        // The map origin is the unplaced-piece sentinel; "calibrating" to it is always the
+        // model echoing the snapshot's placeholder value back, never a real position.
+        if (Math.Abs(kmX - 10.016f) < 0.15f && Math.Abs(kmY - 5.235f) < 0.15f)
+            return "km(10.02,5.24) 是地图原点(未校准哨兵值), 不是真实炮位 — rejected。校准依据只能是统帅部电文里的铁巢网格";
         var result = _map.SetDeclaredTurret(kmX, kmY);
         EventLog.Append("turret_position", "map", result);
         return result;

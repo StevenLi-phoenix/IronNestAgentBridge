@@ -92,7 +92,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "set_turret_position",
-      "description": "把指挥桌上的炮塔模型移动到指定位置。FCS与所有解算以炮塔模型位置为射击原点。任务开始时统帅部电文给出铁巢网格、或阵地转移(电报宣告'已转移至[GRID]')后, 必须用本工具校准, 否则诸元全错。",
+      "description": "把指挥桌上的炮塔棋子移动到指定位置。FCS与所有解算以棋子位置为射击原点。校准依据**只能是统帅部电文/情报中的铁巢网格**(开局的'铁巢 - [GRID]'或阵地转移宣告的新网格), 绝不能引用快照里显示的炮塔km值(那可能是未校准的地图原点哨兵)。",
       "parameters": {
         "type": "object",
         "properties": { "position": { "type": "string", "description": "网格如'H2 3:4'或km坐标'7.35,1.45'" } },
