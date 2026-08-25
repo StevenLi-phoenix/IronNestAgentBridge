@@ -122,8 +122,8 @@
   `MoveZone`（紧急转移约 65 点，无输入，P100，落点不可预知→转移后必须 LocationReport 重校准）；
   `Spotter`（前线观测员 FO，1 点，**startGrid 部署格**，报告离部署点最近敌军的情报，电文回传）；
   `MoveDirection`（定向移动，10 点，**bearingDeg+distanceKm**：令铁巢向指定方向移动设定距离，
-  新炮位=旧炮位+方向×距离可推算→直接 set_assumed_turret_position，比 MoveZone 便宜且免
-  LocationReport）。新弹种（卡面实测）：`LE`（8 点，中等装药小威力，爆半径 150m，精确定位的
+  常规再部署用——**不会暂停/重置反炮兵倒计时，不是逃生手段**（实测确认）；新炮位=旧炮位+
+  方向×距离可推算→直接 set_assumed_turret_position，免 LocationReport）。新弹种（卡面实测）：`LE`（8 点，中等装药小威力，爆半径 150m，精确定位的
   单个小目标省钱选）；`DRIL`（3 点，**训练弹**：混凝土填充无爆炸物，极小有效半径——校射专用，
   无杀伤不揭雾）。价格每局浮动，读实价。
 - distanceKm 输入链（MoveDirection 用）：requisition_card.distanceKm → RequestConsoleCard

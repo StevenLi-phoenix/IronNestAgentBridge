@@ -64,11 +64,12 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   * 被跟踪目标进雾后模型继续外推(约90s后标记不可靠); 不要为同一移动目标叠加多发,
     等弹着评估。
 - 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
-  出路: 摧毁敌炮兵(fire priority>=90), 或转移——**MoveDirection定向移动**(约10点,
-  令铁巢向指定方向移动设定距离, 优先选它: 便宜且新炮位可推算=旧炮位+方向×距离,
-  转移完成后直接set_assumed_turret_position到推算点, 不用买LocationReport)或
-  **MoveZone紧急转移**(约65点, 无输入)。MoveZone落点不可预知, 转移后必须重新校准
-  (买LocationReport)。
+  只有两条出路: 摧毁敌炮兵(fire priority>=90)或**MoveZone紧急转移**(约65点, 无输入,
+  priority=100)——只有它能摆脱敌方火力解算。**注意: MoveDirection定向移动不会暂停/重置
+  反炮兵倒计时**, 它不是逃生手段。MoveZone落点不可预知, 转移后必须重新校准(买LocationReport)。
+- 定向移动(MoveDirection卡, 约10点, bearingDeg+distanceKm): 常规再部署——目标超出射程时
+  拉近距离、或占领更好阵位。新炮位可推算=旧炮位+方向×距离, 移动完成后直接
+  set_assumed_turret_position到推算点, 不用买LocationReport。反炮兵威胁下无逃生价值(见上)。
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
   未揭示目标只能根据电报情报三角定位后用bearingDeg+distanceKm盲射
@@ -269,7 +270,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     "type": "function",
     "function": {
       "name": "requisition_card",
-      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。常用卡: ScoutPlane(侦察机, 贵, 配bearingDeg+startGrid); LocationReport(位置报告, 便宜, **必须给startGrid设置网格输入**(如'A1'), 经电文回报本炮位坐标, 校准依据); MoveZone(紧急转移, 贵, 无需任何输入, 反炮兵逃生); Spotter(前线观测员FO, 约1点, **必须给startGrid部署网格**(如'A1'), 提供最近处敌军的情报, 经电文回传, 不暴露炮位); MoveDirection(定向移动, 约10点, **必须给bearingDeg+distanceKm**: 令铁巢向指定方向移动设定距离, 新炮位可推算=旧炮位+方向×距离, 转移后按推算点重新校准)。卡ID以清单为准, 买错名字时回执会列出全部可购ID。priority: 普通卡50; MoveZone/MoveDirection等紧急逃生用途=100立即插队。",
+      "description": "向FCS控制台协调器提交打孔卡购买请求(串行执行: 插卡/设旋钮/购买, 结果经事件回报)。用于非弹药类卡片; 弹药购买由FCS自动完成, 不要用本工具买弹。常用卡: ScoutPlane(侦察机, 贵, 配bearingDeg+startGrid); LocationReport(位置报告, 便宜, **必须给startGrid设置网格输入**(如'A1'), 经电文回报本炮位坐标, 校准依据); MoveZone(紧急转移, 贵, 无需任何输入, 反炮兵逃生); Spotter(前线观测员FO, 约1点, **必须给startGrid部署网格**(如'A1'), 提供最近处敌军的情报, 经电文回传, 不暴露炮位); MoveDirection(定向移动, 约10点, **必须给bearingDeg+distanceKm**: 令铁巢向指定方向移动设定距离, 常规再部署用——**不会暂停反炮兵倒计时, 不是逃生手段**; 新炮位可推算=旧炮位+方向×距离, 移动后按推算点重新校准)。卡ID以清单为准, 买错名字时回执会列出全部可购ID。priority: 普通卡50; MoveZone紧急逃生=100立即插队。",
       "parameters": {
         "type": "object",
         "properties": {
