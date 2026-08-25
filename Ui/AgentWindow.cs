@@ -108,7 +108,7 @@ public class AgentWindow
         }
 
         if (_buttonsBroken)
-            Add("按钮被游戏裁剪: F11=LLM开关 F12=优先队列 F9=全重置", Color.gray);
+            Add("按钮被游戏裁剪: F11=LLM开关 F7=优先队列 F9=全重置", Color.gray);
 
         var buttonRowH = 26f;
         var height = 30f + buttonRowH + lines.Count * LineH + 10f;

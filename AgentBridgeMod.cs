@@ -148,7 +148,8 @@ public class AgentBridgeMod : MelonMod
                     _window.Visible = !_window.Visible;
                 if (kb.f11Key.wasPressedThisFrame)
                     ToggleLlmControl();
-                if (kb.f12Key.wasPressedThisFrame)
+                // F7, not F12 — F12 is Steam's screenshot key and kept silently toggling this.
+                if (kb.f7Key.wasPressedThisFrame)
                     AgentConfig.PriorityQueue = !AgentConfig.PriorityQueue;
                 // F9 is FCS's plan reset; ride the same semantic — full agent reset.
                 if (kb.f9Key.wasPressedThisFrame)
