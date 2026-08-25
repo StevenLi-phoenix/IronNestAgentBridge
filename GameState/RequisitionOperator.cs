@@ -155,8 +155,29 @@ public static class RequisitionOperator
                     Finish(cardId, "card accepted but no bearing/distance controls appeared (not a recon card?)");
                     yield break;
                 }
-                if (bearingDeg is { } b && bridge.bearingDial != null)
-                    bridge.bearingDial.SetDialValue(b);
+                if (bearingDeg is { } b)
+                {
+                    if (bridge.bearingDial != null)
+                        bridge.bearingDial.SetDialValue(b);
+                    yield return new WaitForSeconds(0.3f);
+
+                    // The dial's raw range may not be degrees — verify what actually landed
+                    // on the card and correct through the bridge's own setter if needed.
+                    var applied = float.NaN;
+                    try { applied = bridge.Bearing; } catch { }
+                    if (float.IsNaN(applied) || Mathf.Abs(Mathf.DeltaAngle(applied, b)) > 1f)
+                    {
+                        try
+                        {
+                            bridge.SetBearingInternal(b, true);
+                            bridge.ForceRefreshAll();
+                            applied = bridge.Bearing;
+                        }
+                        catch { }
+                    }
+                    MelonLogger.Msg($"[AgentBridge] scout bearing requested {b:F1}° applied {applied:F1}°");
+                    EventLog.Append("requisition", "console", $"scout bearing set: requested {b:F1}°, applied {applied:F1}°");
+                }
                 if (distanceKm is { } d && bridge.distanceDial != null)
                     bridge.distanceDial.SetDialValue(d);
                 yield return new WaitForSeconds(0.5f);
