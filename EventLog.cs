@@ -11,6 +11,9 @@ public static class EventLog
     private static readonly List<BridgeEvent> Events = new();
     private static long _nextSeq = 1;
 
+    /// <summary>In-game mission clock ("mm:ss"), refreshed by the mod's update loop.</summary>
+    public static volatile string GameClock = "";
+
     public static void Append(string type, string source, string text, object? data = null)
     {
         lock (Gate)
@@ -22,6 +25,7 @@ public static class EventLog
                 Type = type,
                 Source = source,
                 Text = text,
+                GameTime = GameClock,
                 Data = data,
             });
             if (Events.Count > Capacity)

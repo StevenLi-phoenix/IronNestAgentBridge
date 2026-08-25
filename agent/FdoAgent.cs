@@ -98,10 +98,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 - 队列纪律(最重要): **队列状态的唯一权威是当前快照的 fcs.pendingTasks + L/R 炮位任务**,
   实时反映事实。你的对话历史只说明"下达过", 不说明"还在队列":
   * 目标出现在 pendingTasks 或 L/R 上 → 在途, 严禁重复排。
-  * 历史称已排、但 pendingTasks 和炮位上都没有 → 该任务已执行完毕(弹已出膛)或被
-    F9/取消清除, "在队列中"的说法是错误的, 不要这么表述。此时看目标:
-    isAlive=false → 已解决; 仍alive → 弹着可能未命中或任务被清, **可以重新排**
-    (这不算重复——队列里已经没有它了)。
+  * 历史称已排、但 pendingTasks 和炮位上都没有 → 先查快照的**在途炮弹**清单:
+    在清单上 = 弹已出膛正在飞(shell_fired事件), 目标已被服务, **严禁重复排队**,
+    等弹着(shell_impact)再评估。也不在在途清单 → 该任务已落地或被F9/取消清除,
+    此时看目标: isAlive=false → 已解决; 仍alive → 未命中或任务被清, **可以重新排**
+    (这不算重复——队列和天上都没有它了)。
   * F9/重置后队列清空, 历史里所有"已排"作废, 以快照为准重新规划。
   排队延迟认知: 任务上炮后执行约1分钟, 但双炮吞吐有限, 队列深时可等15分钟以上——
   队列越深越要克制, 低优先级目标宁可不排; 排队久的目标可能已移动/被摧毁。
@@ -386,6 +387,24 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 {
                     since = events[^1].Seq;
                     idleSlices = 0;
+
+                    // Debounce: bursts arrive over a second or two (telegraph lines printing,
+                    // multi-entity reveals). Keep collecting until the stream is quiet for 1s
+                    // (hard cap 6s) so one decision sees the whole picture instead of a
+                    // round per fragment.
+                    var settleDeadline = Environment.TickCount64 + 6_000;
+                    while (Environment.TickCount64 < settleDeadline && !ct.IsCancellationRequested)
+                    {
+                        var more = EventLog.WaitForEvents(since, 1_000);
+                        if (more.Count == 0)
+                            break;
+                        events.AddRange(more);
+                        since = more[^1].Seq;
+                    }
+
+                    // Dedup within the burst: identical type+text repeats add tokens, not intel.
+                    var seen = new HashSet<string>();
+                    events = events.Where(e => seen.Add(e.Type + "" + e.Text)).ToList();
                 }
                 else
                 {
@@ -435,6 +454,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             foreach (var t in s.Fcs.PendingTasks)
                 sb.AppendLine("  " + t);
         }
+        if (s.InFlightShells.Count > 0)
+            sb.AppendLine("在途炮弹(已出膛未落地, 目标已被服务, **严禁重复排队**): "
+                          + string.Join(" | ", s.InFlightShells));
         foreach (var g in s.Guns)
             sb.AppendLine($"火炮{g.Side}: 膛={g.ChamberedShell ?? "空"} 药={g.PowderCharges} canFire={g.CanFire}");
         var shellNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -628,7 +650,8 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
 
         var context =
             (_carrySummary.Length > 0 ? "## 前情简报(此前对话已压缩)\n" + _carrySummary + "\n\n" : "") +
-            "## 新事件\n" + string.Join("\n", events.Select(e => $"[{e.Source}/{e.Type}] {e.Text}")) +
+            "## 新事件(带游戏内任务计时)\n" + string.Join("\n", events.Select(e =>
+                $"[{(e.GameTime.Length > 0 ? e.GameTime + " " : "")}{e.Source}/{e.Type}] {e.Text}")) +
             "\n\n" + BuildCompactState(snapshot);
         _carrySummary = "";
 

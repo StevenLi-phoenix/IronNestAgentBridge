@@ -21,7 +21,7 @@ public class ImpactReader
     }
 
     /// <summary>Poll impact markers; emit an event for each new/moved impact.</summary>
-    public void PollAndEmitEvents(Transform? mapSurface)
+    public void PollAndEmitEvents(Transform? mapSurface, Action<float, float>? onImpact = null)
     {
         if (mapSurface == null)
             return;
@@ -51,6 +51,7 @@ public class ImpactReader
 
             EventLog.Append("shell_impact", "map",
                 $"实际弹着({gunName}): km({kmX:F2},{kmY:F2}) [{Agent.GridMath.GridOf((kmX, kmY))}]");
+            try { onImpact?.Invoke(kmX, kmY); } catch { }
         }
 
         PollCorrectionHints();

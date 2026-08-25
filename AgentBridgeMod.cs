@@ -70,6 +70,46 @@ public class AgentBridgeMod : MelonMod
     private bool _cbWasRunning;
     private float _nextCbTick;
 
+    /// <summary>Mirror the mission stat clock into EventLog.GameClock ("mm:ss").</summary>
+    private void UpdateGameClock()
+    {
+        try
+        {
+            var tracker = MissionStatsTracker.Instance;
+            if (tracker == null || !tracker.timerRunning)
+                return;
+            var t = tracker.timerValue;
+            EventLog.GameClock = $"{(int)(t / 60):00}:{(int)(t % 60):00}";
+        }
+        catch { }
+    }
+
+    private sealed record InFlightShell(string Label, string Shell, float KmX, float KmY, float FiredAt);
+    private readonly List<InFlightShell> _inFlight = new();
+    private const float InFlightTimeoutSeconds = 150f;
+    private const float ImpactMatchKm = 3f;
+
+    /// <summary>An actual impact landed: resolve the nearest in-flight shell within range.</summary>
+    private void OnShellImpact(float kmX, float kmY)
+    {
+        InFlightShell? best = null;
+        var bestDist = ImpactMatchKm;
+        foreach (var s in _inFlight)
+        {
+            var d = MathF.Sqrt((s.KmX - kmX) * (s.KmX - kmX) + (s.KmY - kmY) * (s.KmY - kmY));
+            if (d < bestDist) { bestDist = d; best = s; }
+        }
+        if (best != null)
+            _inFlight.Remove(best);
+    }
+
+    public List<string> DescribeInFlight()
+    {
+        var now = UnityEngine.Time.realtimeSinceStartup;
+        _inFlight.RemoveAll(s => now - s.FiredAt > InFlightTimeoutSeconds);
+        return _inFlight.Select(s => $"{s.Label} ({s.Shell}, 已飞{now - s.FiredAt:F0}s)").ToList();
+    }
+
     /// <summary>
     /// Counter-battery countdown relay: the bunker timer the player can see/hear, pushed to
     /// the agent as counter_battery events — on start, every 20 s while running, on expiry
@@ -234,7 +274,7 @@ public class AgentBridgeMod : MelonMod
             _nextMapPoll = now + MapPollSeconds;
             try { _map.PollAndEmitEvents(); }
             catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] map poll failed: {ex.Message}"); }
-            try { _impacts.PollAndEmitEvents(_map.MapSurface); }
+            try { _impacts.PollAndEmitEvents(_map.MapSurface, OnShellImpact); }
             catch { }
         }
 
@@ -272,6 +312,8 @@ public class AgentBridgeMod : MelonMod
             catch { }
             try { PollCounterBattery(now); }
             catch { }
+            try { UpdateGameClock(); }
+            catch { }
         }
 
         if (now >= _nextFcsSummary)
@@ -297,8 +339,8 @@ public class AgentBridgeMod : MelonMod
         }
     }
 
-    // marker id -> the target label its current mission covers (entityId or bearing/distance)
-    private readonly Dictionary<int, string> _deployedMarkers = new();
+    // marker id -> the mission its current deployment covers (label + shell + aim point)
+    private readonly Dictionary<int, InFlightShell> _deployedMarkers = new();
     private static readonly System.Text.RegularExpressions.Regex TaskIdRe =
         new(@"^T(\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -323,8 +365,16 @@ public class AgentBridgeMod : MelonMod
 
         foreach (var id in _deployedMarkers.Keys.Where(id => !inUse.Contains(id)).ToList())
         {
-            if (_map.ReturnMarkerHome(id))
-                _deployedMarkers.Remove(id);
+            if (!_map.ReturnMarkerHome(id))
+                continue;
+            // The task left pending and both gun slots: the shell is in the air (or the task
+            // was cancelled — rare, agent-initiated, self-corrects on timeout). Track it so
+            // the agent doesn't re-queue a target whose shell is still flying.
+            var dep = _deployedMarkers[id];
+            _deployedMarkers.Remove(id);
+            _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup });
+            EventLog.Append("shell_fired", "fcs",
+                $"炮弹出膛: {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标");
         }
     }
 
@@ -333,8 +383,8 @@ public class AgentBridgeMod : MelonMod
     {
         if (desc == null) return null;
         var m = TaskIdRe.Match(desc);
-        if (m.Success && int.TryParse(m.Groups[1].Value, out var id) && _deployedMarkers.TryGetValue(id, out var label))
-            return $"{desc} → {label}";
+        if (m.Success && int.TryParse(m.Groups[1].Value, out var id) && _deployedMarkers.TryGetValue(id, out var dep))
+            return $"{desc} → {dep.Label}";
         return desc;
     }
 
@@ -360,6 +410,7 @@ public class AgentBridgeMod : MelonMod
         EventLog.Clear(); // stale events must not replay into the restarted agent's fresh context
         _lastCardResult = "";
         _deployedMarkers.Clear();
+        _inFlight.Clear();
         _map.Unbind();
         _impacts.Reset();
         _telegraph.Reset();
@@ -389,6 +440,7 @@ public class AgentBridgeMod : MelonMod
         snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);
         snapshot.Fcs.RightTask = AnnotateTask(snapshot.Fcs.RightTask);
         snapshot.Fcs.PendingTasks = snapshot.Fcs.PendingTasks.Select(t => AnnotateTask(t)!).ToList();
+        snapshot.InFlightShells = DescribeInFlight();
         if (_map.IsBound)
         {
             var turretLocal = _map.TurretLocalOnMap();
@@ -594,7 +646,7 @@ public class AgentBridgeMod : MelonMod
             var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority);
             if (result == "ok")
             {
-                _deployedMarkers[markerId] = label;
+                _deployedMarkers[markerId] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f);
                 EventLog.Append("fcs_task_update", "fcs",
                     $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as marker {markerId}");
                 return "ok" + suffix;

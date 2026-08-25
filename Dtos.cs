@@ -85,6 +85,9 @@ public class StateSnapshotDto
     public List<string> AvailableShells { get; set; } = new();
     public List<CardDto> Cards { get; set; } = new();
     public List<ShellSpecDto> ShellSpecs { get; set; } = new();
+    // Shells fired but not yet landed: gone from the FCS queue and the gun slots, yet their
+    // targets are already served — re-queuing them double-spends ammunition.
+    public List<string> InFlightShells { get; set; } = new();
 }
 
 public class ShellSpecDto
@@ -119,6 +122,8 @@ public class BridgeEvent
     public string Type { get; set; } = "";   // telegraph_message | entity_revealed | entity_moved | entity_damaged | entity_destroyed | fcs_task_update
     public string Source { get; set; } = ""; // primary | secondary | map | fcs
     public string Text { get; set; } = "";
+    // In-game mission clock ("mm:ss") at append time; empty when no mission timer runs.
+    public string GameTime { get; set; } = "";
     public object? Data { get; set; }
 }
 
