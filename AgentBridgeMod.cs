@@ -67,6 +67,47 @@ public class AgentBridgeMod : MelonMod
     /// <summary>Mirrors Application.isFocused for background threads; agent pauses while false.</summary>
     public static volatile bool GameFocused = true;
 
+    private MissionManager.GamePhase? _lastPhase;
+
+    /// <summary>
+    /// Mission lifecycle automation off MissionManager.CurrentPhase:
+    /// leaving MissionActive (summary screen / back to map / menu) auto-stops the agent so it
+    /// doesn't burn tokens against a dead battlefield; entering MissionActive wipes the previous
+    /// mission's conversation and event log — stale intel from the last map is worse than none.
+    /// The agent never auto-starts: F11 remains the per-session opt-in.
+    /// </summary>
+    private void UpdateMissionPhase()
+    {
+        MissionManager.GamePhase phase;
+        try
+        {
+            var mm = MissionManager.Instance;
+            if (mm == null) return;
+            phase = mm.CurrentPhase;
+        }
+        catch { return; }
+
+        if (_lastPhase == phase)
+            return;
+        var prev = _lastPhase;
+        _lastPhase = phase;
+        if (prev == null)
+            return; // first sample after boot — no transition to act on
+
+        if (prev == MissionManager.GamePhase.MissionActive)
+        {
+            MelonLogger.Msg($"[AgentBridge] mission ended ({prev}->{phase}) — agent auto-stop");
+            Agent.TransactionLog.Write("mission", $"mission ended ({prev}->{phase}); agent auto-stopped");
+            if (AgentConfig.LlmControl)
+                AgentConfig.LlmControl = false;
+            if (_agent?.IsRunning == true)
+                _agent.Stop();
+        }
+
+        if (phase == MissionManager.GamePhase.MissionActive)
+            FullReset("new mission — clearing previous conversation");
+    }
+
     public override void OnInitializeMelon()
     {
         AgentConfig.Initialize();
@@ -173,6 +214,8 @@ public class AgentBridgeMod : MelonMod
             try { UpdateCinematicState(); }
             catch { }
             try { DetectManualCalibration(); }
+            catch { }
+            try { UpdateMissionPhase(); }
             catch { }
         }
 
