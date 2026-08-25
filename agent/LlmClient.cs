@@ -10,7 +10,7 @@ namespace IronNestAgentBridge.Agent;
 /// </summary>
 public static class LlmClient
 {
-    private const int MaxToolRounds = 8;
+    private const int MaxToolRounds = 24;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(300) };
 
@@ -72,7 +72,17 @@ public static class LlmClient
             }
         }
 
-        return "(tool round limit reached)";
+        // Cap reached: force one text-only pass so the model still delivers a proper
+        // decision summary and the history closes on an assistant turn (instead of
+        // dangling tool results plus a placeholder).
+        messages.Add(new Dictionary<string, object?>
+        {
+            ["role"] = "user",
+            ["content"] = "(系统) 本轮工具调用次数已达上限。停止调用工具, 立即用纯文本总结: 已完成的动作、未完成的意图(下轮优先做什么)。",
+        });
+        var (finalText, _) = StreamOneRound(messages, null, onDelta, ct);
+        messages.Add(new Dictionary<string, object?> { ["role"] = "assistant", ["content"] = finalText });
+        return finalText.Length > 0 ? finalText : "(tool round limit reached)";
     }
 
     private sealed class ToolCall
