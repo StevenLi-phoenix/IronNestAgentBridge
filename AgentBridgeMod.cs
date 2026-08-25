@@ -70,6 +70,9 @@ public class AgentBridgeMod : MelonMod
     private bool _cbWasRunning;
     private float _nextCbTick;
 
+    /// <summary>Mission clock in seconds, mirrored for motion-model timestamps.</summary>
+    public static volatile float MissionClockSeconds;
+
     /// <summary>Mirror the mission stat clock into EventLog.GameClock ("mm:ss").</summary>
     private void UpdateGameClock()
     {
@@ -79,6 +82,7 @@ public class AgentBridgeMod : MelonMod
             if (tracker == null || !tracker.timerRunning)
                 return;
             var t = tracker.timerValue;
+            MissionClockSeconds = t;
             EventLog.GameClock = $"{(int)(t / 60):00}:{(int)(t % 60):00}";
         }
         catch { }
@@ -602,7 +606,7 @@ public class AgentBridgeMod : MelonMod
             return $"distance {dist:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
 
         // Blast-radius survey around the final aim point: friendlies inside the radius block
-        // the mission (soft — confirmFriendlyFire overrides); visible hostiles inside it are
+        // the mission (soft — allowDangerouslyFriendlyFire overrides); visible hostiles inside it are
         // reported back so the LLM can verify a merged strike actually covers its cluster.
         var suffix = "";
         var blastKm = (spec?.ImpactRadius ?? 0f) / 1000f;
@@ -628,10 +632,10 @@ public class AgentBridgeMod : MelonMod
                     hostilesCovered.Add($"{e.Id}({dKm:F2}km)");
             }
 
-            if (friendliesInside.Count > 0 && !req.ConfirmFriendlyFire)
+            if (friendliesInside.Count > 0 && !req.AllowDangerouslyFriendlyFire)
                 return $"友军误伤警告 — 已拒绝: {string.Join(", ", friendliesInside)} 在弹着点km({kmXCheck:F2},{kmYCheck:F2})" +
                        $"的{req.Shell}爆炸半径{blastKm * 1000f:F0}m内。用offsetKmX/offsetKmY把弹着点向远离友军一侧移出半径" +
-                       "(会牺牲部分毁伤), 或换更小爆炸半径的弹种; 确认接受误伤才用confirmFriendlyFire=true重试";
+                       "(会牺牲部分毁伤), 或换更小爆炸半径的弹种; 确认接受误伤才用allowDangerouslyFriendlyFire=true重试";
             if (friendliesInside.Count > 0)
                 suffix += $"; 警告: 已确认误伤风险, 友军在爆炸半径内: {string.Join(", ", friendliesInside)}";
             else if (friendliesNear.Count > 0)
@@ -640,10 +644,34 @@ public class AgentBridgeMod : MelonMod
                 suffix += $"; 爆炸半径({blastKm * 1000f:F0}m)可同时覆盖: {string.Join(", ", hostilesCovered)}";
         }
 
+        // Moving-target motion model (telegraph intel): transcribe into the map-local
+        // linear function the patched FCS extrapolates each planning round.
+        Fcs.FcsGateway.MotionSpec? motion = null;
+        if (!string.IsNullOrEmpty(req.MotionFrom))
+        {
+            if (Agent.GridMath.ParsePoint(req.MotionFrom!, (10.016, 5.235)) is not { } m0)
+                return $"cannot parse motionFrom '{req.MotionFrom}'";
+            if (req.MotionBearingDeg is not { } mb || req.MotionSpeedKmh is not { } mv)
+                return "motionFrom requires motionBearingDeg and motionSpeedKmh";
+            var t0 = MissionClockSeconds;
+            if (!string.IsNullOrWhiteSpace(req.MotionAtTime))
+            {
+                var parts = req.MotionAtTime!.Split(':');
+                if (parts.Length != 2 || !int.TryParse(parts[0], out var mm) || !int.TryParse(parts[1], out var ss))
+                    return $"cannot parse motionAtTime '{req.MotionAtTime}' (expect \"mm:ss\", same clock as event stamps)";
+                t0 = mm * 60 + ss;
+            }
+            var rad = mb * MathF.PI / 180f;
+            var speedLocalPerSec = mv / 3600f / 3.8164f;
+            motion = new Fcs.FcsGateway.MotionSpec(
+                (float)((m0.x - 10.016) / 3.8164), (float)((m0.y - 5.235) / 3.8164),
+                MathF.Sin(rad) * speedLocalPerSec, MathF.Cos(rad) * speedLocalPerSec, t0);
+        }
+
         var markerId = NextMarkerId();
         if (markerId >= 0 && _map.TryMoveMarker(markerId, mapX, mapY))
         {
-            var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority);
+            var result = _fcs.EnqueueFromMarker(markerId, req.Shell, req.Priority, req.EntityId, motion);
             if (result == "ok")
             {
                 _deployedMarkers[markerId] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f);

@@ -148,5 +148,12 @@ public class FireMissionRequest
     public float? OffsetKmY { get; set; }
     // A friendly inside the shell's blast radius blocks the mission with a warning;
     // this overrides the block after the LLM has seen and accepted the warning.
-    public bool ConfirmFriendlyFire { get; set; }
+    public bool AllowDangerouslyFriendlyFire { get; set; }
+    // Linear motion model for a moving target the map can't see (telegraph intel):
+    // observed at MotionFrom at mission time MotionAtTime ("mm:ss", default now), moving on
+    // MotionBearingDeg at MotionSpeedKmh. FCS extrapolates p(t)=p0+v(t-t0) to impact time.
+    public string? MotionFrom { get; set; }
+    public float? MotionBearingDeg { get; set; }
+    public float? MotionSpeedKmh { get; set; }
+    public string? MotionAtTime { get; set; }
 }

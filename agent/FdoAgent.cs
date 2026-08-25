@@ -42,8 +42,16 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   没被覆盖到的目标才单独排任务。
 - 友军安全: 弹着点爆炸半径内有友军/平民(role含Ally/Spotter/civilian)时fire会拒绝并警告。
   此时优先用offsetKmX/offsetKmY把弹着点向**远离友军一侧**移出爆炸半径(牺牲部分毁伤换
-  安全), 或改用爆炸半径更小的弹种; 只有统帅部明确要求贴身支援时才confirmFriendlyFire=true。
-- 反炮兵威胁下优先高价值目标
+  安全), 或改用爆炸半径更小的弹种; 只有统帅部明确要求贴身支援时才allowDangerouslyFriendlyFire=true。
+- 移动目标(严禁自己算提前量, FCS全自动):
+  * 可见的移动目标: 直接fire(entityId)。FCS会持续跟踪该实体——排队等待期间瞄点吸附
+    目标, 临发射按实测速度外推提前量(备炮+飞行时间), 你不需要做任何预测。
+  * 迷雾中的移动目标(电报报告的车队/纵队等): 把情报逐字转录成运动模型交给FCS:
+    fire(target=观测点, motionFrom=观测点, motionBearingDeg=航向, motionSpeedKmh=速度,
+    motionAtTime=报告时刻"mm:ss")。FCS用一次函数p(t)=p0+v(t-t0)把弹着外推到命中时刻。
+    事件时间戳与motionAtTime同一时钟, 直接抄即可。
+  * 被跟踪目标进雾后模型继续外推(约90s后标记不可靠); 不要为同一移动目标叠加多发,
+    等弹着评估。
 - 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
   两条出路: 摧毁敌炮兵(fire priority>=90)或"紧急转移"类卡(requisition_card priority=100);
   转移完成后炮位已变, 必须依据新电文重新校准。
@@ -151,7 +159,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "priority": { "type": "number", "description": "0-100, 默认50; 反炮兵>=90" },
           "offsetKmX": { "type": "number", "description": "弹着点微偏移km(东正西负, |≤0.5|): 在选定目标基础上把弹着点移开, 用于避开近旁友军(向远离友军方向偏)或瞄准目标群中点" },
           "offsetKmY": { "type": "number", "description": "弹着点微偏移km(北正南负, |≤0.5|)" },
-          "confirmFriendlyFire": { "type": "boolean", "description": "友军在爆炸半径内时fire会拒绝并警告; 仅在确认接受误伤风险时置true重试" }
+          "allowDangerouslyFriendlyFire": { "type": "boolean", "description": "友军在爆炸半径内时fire会拒绝并警告; 仅在确认接受误伤风险时置true重试" },
+          "motionFrom": { "type": "string", "description": "迷雾中移动目标的运动模型: 观测点(网格或'kmX,kmY')。与motionBearingDeg/motionSpeedKmh一起把电报情报转录成一次函数, FCS自动外推提前量。可见目标不需要——用entityId即自动跟踪" },
+          "motionBearingDeg": { "type": "number", "description": "运动模型: 目标运动航向(北=0顺时针)" },
+          "motionSpeedKmh": { "type": "number", "description": "运动模型: 目标速度km/h" },
+          "motionAtTime": { "type": "string", "description": "运动模型: 观测时刻'mm:ss'(与事件时间戳同轴), 省略=当下" }
         },
         "required": ["shell"]
       }
@@ -751,7 +763,11 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             Priority = action.TryGetProperty("priority", out var p) && p.ValueKind == JsonValueKind.Number ? Math.Clamp(p.GetInt32(), 0, 100) : 50,
             OffsetKmX = action.TryGetProperty("offsetKmX", out var ox) && ox.ValueKind == JsonValueKind.Number ? ox.GetSingle() : null,
             OffsetKmY = action.TryGetProperty("offsetKmY", out var oy) && oy.ValueKind == JsonValueKind.Number ? oy.GetSingle() : null,
-            ConfirmFriendlyFire = action.TryGetProperty("confirmFriendlyFire", out var cff) && cff.ValueKind == JsonValueKind.True,
+            AllowDangerouslyFriendlyFire = action.TryGetProperty("allowDangerouslyFriendlyFire", out var cff) && cff.ValueKind == JsonValueKind.True,
+            MotionFrom = action.TryGetProperty("motionFrom", out var mf) ? mf.GetString() : null,
+            MotionBearingDeg = action.TryGetProperty("motionBearingDeg", out var mbd) && mbd.ValueKind == JsonValueKind.Number ? mbd.GetSingle() : null,
+            MotionSpeedKmh = action.TryGetProperty("motionSpeedKmh", out var msk) && msk.ValueKind == JsonValueKind.Number ? msk.GetSingle() : null,
+            MotionAtTime = action.TryGetProperty("motionAtTime", out var mat) ? mat.GetString() : null,
         };
         var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
         var stamp = DateTime.Now.ToString("HH:mm:ss");

@@ -222,7 +222,30 @@ public class FcsGateway
     /// `markerId` onto the target; this calls MapTable.GetMarkTarget(markerId) so the
     /// bearing/distance/grid come from the exact same code path as a human click.
     /// </summary>
-    public string EnqueueFromMarker(int markerId, string shell, int priority = 50)
+    /// <summary>Linear motion model handed to the patched FCS (map-local frame, mission-clock seconds).</summary>
+    public sealed record MotionSpec(float OriginLocalX, float OriginLocalY, float VelLocalX, float VelLocalY, float T0Seconds);
+
+    private static void TrySetMotion(object task, string? trackEntityId, MotionSpec? motion)
+    {
+        // Fields exist only on our patched FCS build; stock FCS silently ignores them.
+        var t = task.GetType();
+        try
+        {
+            if (!string.IsNullOrEmpty(trackEntityId))
+                t.GetField("trackEntityId")?.SetValue(task, trackEntityId);
+            if (motion != null)
+            {
+                t.GetField("hasMotion")?.SetValue(task, true);
+                t.GetField("motionOriginLocal")?.SetValue(task, new Vector3(motion.OriginLocalX, motion.OriginLocalY, 0f));
+                t.GetField("motionVelLocalPerSec")?.SetValue(task, new Vector3(motion.VelLocalX, motion.VelLocalY, 0f));
+                t.GetField("motionT0")?.SetValue(task, motion.T0Seconds);
+            }
+        }
+        catch { }
+    }
+
+    public string EnqueueFromMarker(int markerId, string shell, int priority = 50,
+        string? trackEntityId = null, MotionSpec? motion = null)
     {
         var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
         if (fsc == null)
@@ -249,6 +272,7 @@ public class FcsGateway
         taskType.GetField("targetId")!.SetValue(task, markerId);
         taskType.GetField("bulletType")!.SetValue(task, bullet);
         TrySetPriority(task, priority);
+        TrySetMotion(task, trackEntityId, motion);
 
         fsc.GetType().GetMethod("EnqueueTask", AnyInstance)!.Invoke(fsc, new[] { task });
         return "ok";
