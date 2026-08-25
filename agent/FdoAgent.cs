@@ -44,6 +44,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   此时优先用offsetKmX/offsetKmY把弹着点向**远离友军一侧**移出爆炸半径(牺牲部分毁伤换
   安全), 或改用爆炸半径更小的弹种; 只有统帅部明确要求贴身支援时才confirmFriendlyFire=true。
 - 反炮兵威胁下优先高价值目标
+- 反炮击倒计时(counter_battery事件, 20s一报): 归零=敌炮火覆盖本阵地。剩余时间紧张时
+  两条出路: 摧毁敌炮兵(fire priority>=90)或"紧急转移"类卡(requisition_card priority=100);
+  转移完成后炮位已变, 必须依据新电文重新校准。
 - 战争迷雾: entities[]是当前唯一的已揭示目标清单, 为空就说明没有任何目标被揭示。
   entityId必须一字不差地取自entities[]里实际存在的id, 严禁凭空猜测或编造id。
   未揭示目标只能根据电报情报三角定位后用bearingDeg+distanceKm盲射

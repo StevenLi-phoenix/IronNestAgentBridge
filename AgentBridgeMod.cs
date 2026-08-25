@@ -67,6 +67,71 @@ public class AgentBridgeMod : MelonMod
 
     private MissionManager.GamePhase? _lastPhase;
 
+    private bool _cbWasRunning;
+    private float _nextCbTick;
+
+    /// <summary>
+    /// Counter-battery countdown relay: the bunker timer the player can see/hear, pushed to
+    /// the agent as counter_battery events — on start, every 20 s while running, on expiry
+    /// and on permanent stop. Zero means enemy fire lands on this position.
+    /// </summary>
+    private void PollCounterBattery(float now)
+    {
+        CounterBatteryTimer? timer = null;
+        try { timer = CounterBatteryTimer.Instance; } catch { }
+        if (timer == null)
+        {
+            _cbWasRunning = false;
+            return;
+        }
+
+        bool running, expired, stopped;
+        float remaining;
+        try
+        {
+            running = timer.IsRunning;
+            expired = timer.IsExpired;
+            stopped = timer.IsPermanentlyStopped;
+            remaining = timer.TimeRemaining;
+        }
+        catch { return; }
+
+        static string Fmt(float s) => $"{(int)(s / 60):00}:{(int)(s % 60):00}";
+
+        if (stopped)
+        {
+            if (_cbWasRunning)
+                EventLog.Append("counter_battery", "game", "反炮击倒计时已永久解除 — 威胁排除");
+            _cbWasRunning = false;
+            return;
+        }
+        if (expired)
+        {
+            if (_cbWasRunning)
+                EventLog.Append("counter_battery", "game", "反炮击倒计时归零 — 敌炮火正在覆盖本阵地");
+            _cbWasRunning = false;
+            return;
+        }
+        if (!running)
+        {
+            _cbWasRunning = false;
+            return;
+        }
+
+        if (!_cbWasRunning)
+        {
+            _cbWasRunning = true;
+            _nextCbTick = now + 20f;
+            EventLog.Append("counter_battery", "game",
+                $"反炮击倒计时启动: 剩余 {Fmt(remaining)} — 归零时敌炮火覆盖本阵地");
+        }
+        else if (now >= _nextCbTick)
+        {
+            _nextCbTick = now + 20f;
+            EventLog.Append("counter_battery", "game", $"反炮击倒计时: 剩余 {Fmt(remaining)}");
+        }
+    }
+
     /// <summary>
     /// Mission lifecycle automation off MissionManager.CurrentPhase:
     /// leaving MissionActive (summary screen / back to map / menu) auto-stops the agent so it
@@ -205,6 +270,8 @@ public class AgentBridgeMod : MelonMod
             catch { }
             try { UpdateMissionPhase(); }
             catch { }
+            try { PollCounterBattery(now); }
+            catch { }
         }
 
         if (now >= _nextFcsSummary)
@@ -297,6 +364,7 @@ public class AgentBridgeMod : MelonMod
         _impacts.Reset();
         _telegraph.Reset();
         _baselineCamera = null;
+        _cbWasRunning = false;
         TurretCalibrated = false;
         _lastPieceLocal = null;
         _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
