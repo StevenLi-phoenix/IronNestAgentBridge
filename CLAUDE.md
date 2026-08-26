@@ -11,16 +11,16 @@
   + 挪物理标记 + 更新弹着匹配点；工具 adjust_fire + `POST /adjust`。
 - **标记体制重构**：桥**彻底不再移动任何地图标记**。入队走纯坐标路径
   `FcsGateway.EnqueueAimPoint(local, brg, dist, …, out serial)`（反射建 task：targetId=0、
-  hasAimPoint/aimLocal、返回 FCS 分配的 serial；EnqueueFromMarker 保留未用）。**T1/T2 归 FCS
-  自动控制**（FSC.GunTargetMarkerLoop 0.5s：T1=左炮当前任务瞄点、T2=右炮，无任务归位，
-  MapTable.SetGunTargetMarker + \_gunMarkerHomes），**T3+ 完全归玩家手动**。桥簿记从
+  hasAimPoint/aimLocal、返回 FCS 分配的 serial；EnqueueFromMarker 保留未用）。**T9/T10 归 FCS
+  自动控制**（FSC.GunTargetMarkerLoop 0.5s：T9=左炮当前任务瞄点、T10=右炮，
+  MapTable.SetGunTargetMarker + \_gunMarkerHomes），**T1-T8 完全归玩家手动**。桥簿记从
   marker 键改 serial 键（\_deployedTasks），出膛判定=簿记 serial 不在 SerialToMarker.Keys
   （TrackFiredShells，无任何物理归位操作）；adjust 不再挪标记。FCS 全部日志 T{targetId} →
   #{serial}（"#2 P90 T5" 类混合文本绝迹）。
 - **任务编号体系重构**：T 编号（=标记号，回收复用必重复）从一切对外显示/寻址中删除。
   每任务获唯一流水号 **#N**（ArtilleryTask.serial，入队时 TaskDispatcher 分配、抢占重排保留、
-  F9 归零），adjust/cancel（FSC.AdjustTaskAim / CancelPendingTask）只认 #N。**T1/T2 是固定
-  炮位标签**（T1=左炮、T2=右炮当前任务），出现在 FCS HUD、桥面板与快照。标记回收/任务标注
+  F9 归零），adjust/cancel（FSC.AdjustTaskAim / CancelPendingTask）只认 #N。**T9/T10 是固定
+  炮位标签**（T9=左炮、T10=右炮当前任务），出现在 FCS HUD、桥面板与快照。标记回收/任务标注
   改用 FcsStatusDto.SerialToMarker 结构化映射（gateway 反射读 serial+targetId），不再正则
   解析显示串；FirePlan.Label、FirePriorityStatusText、队列行均显示 #N；stock FCS（无 serial
   字段）时 DescribeTask 回退旧 T 前缀。

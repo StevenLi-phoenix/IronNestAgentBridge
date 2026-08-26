@@ -419,7 +419,7 @@ public class AgentBridgeMod : MelonMod
         => AmmoReader.ReadRequisitionPoints() is { } p ? $" · 征用点余额 {p}" : "";
 
     // task serial (#N) -> the mission it covers (label + shell + aim point). No physical
-    // marker involved: map tokens belong to the player (T3+) and FCS's gun indicators (T1/T2).
+    // marker involved: map tokens belong to the player (T1-T8) and FCS's gun indicators (T9/T10).
     private readonly Dictionary<int, InFlightShell> _deployedTasks = new();
     private static readonly System.Text.RegularExpressions.Regex TaskSerialRe =
         new(@"^#(\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -799,7 +799,7 @@ public class AgentBridgeMod : MelonMod
         }
 
         // Pure aim-point enqueue: no physical marker is touched — the map tokens belong to
-        // the player (T3+) and to FCS's own gun indicators (T1/T2). The task is late-bound
+        // the player (T1-T8) and to FCS's own gun indicators (T9/T10). The task is late-bound
         // via aimLocal; initial bearing/distance derive from the final aim vs the piece.
         {
             var turretLocal = _map.TurretLocalOnMap();
@@ -973,7 +973,7 @@ public class AgentBridgeMod : MelonMod
         if (result.StartsWith("ok"))
         {
             // Keep the impact-matching aim point current; no physical marker is involved
-            // (T1/T2 follow automatically via the FCS gun-marker loop).
+            // (T9/T10 follow automatically via the FCS gun-marker loop).
             if (_deployedTasks.TryGetValue(req.Serial, out var deployed))
                 _deployedTasks[req.Serial] = deployed with { Label = label, KmX = kmXCheck, KmY = kmYCheck };
             EventLog.Append("fcs_task_update", "fcs", $"#{req.Serial} 瞄准点已调整 → {label}");
