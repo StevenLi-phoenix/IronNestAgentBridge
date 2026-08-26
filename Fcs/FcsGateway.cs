@@ -368,7 +368,8 @@ public class FcsGateway
     /// Returns the FCS-assigned unique serial (#N) on success, -1 otherwise.
     /// </summary>
     public string EnqueueAimPoint(float localX, float localY, float bearingDeg, float distanceKm,
-        string shell, int priority, out int serial, string? trackEntityId = null, MotionSpec? motion = null)
+        string shell, int priority, out int serial, string? trackEntityId = null, MotionSpec? motion = null,
+        float? validForSeconds = null)
     {
         serial = -1;
         var fsc = ResolveFsc(out var modPresent, out var logicLoaded);
@@ -400,6 +401,8 @@ public class FcsGateway
         taskType.GetField("aimLocal")!.SetValue(task, new Vector3(localX, localY, 0f));
         TrySetPriority(task, priority);
         TrySetMotion(task, trackEntityId, motion);
+        if (validForSeconds is { } valid and > 0f)
+            try { taskType.GetField("validForSeconds")?.SetValue(task, valid); } catch { }
 
         var enqueue = fsc.GetType().GetMethod("EnqueueTask", AnyInstance);
         if (enqueue == null)

@@ -261,6 +261,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
           "distanceKm": { "type": "number" },
           "shell": { "type": "string", "description": "弹种, 从征用台清单选" },
           "priority": { "type": "number", "description": "0-100, 默认50; 反炮兵>=90" },
+          "validForSeconds": { "type": "number", "description": "时效秒数(可选): 任务在队列中等待超过此时长仍未上炮就自动撤销。用于时敏目标——移动集群、短暂窗口、照明请求等打晚了不如不打的任务(如180); 不给=永久有效" },
           "offsetKmX": { "type": "number", "description": "弹着点微偏移km(东正西负, |≤0.5|): 在选定目标基础上把弹着点移开, 用于避开近旁友军(向远离友军方向偏)或瞄准目标群中点" },
           "offsetKmY": { "type": "number", "description": "弹着点微偏移km(北正南负, |≤0.5|)" },
           "allowDangerouslyFriendlyFire": { "type": "boolean", "description": "友军在爆炸半径内时fire会拒绝并警告; 仅在确认接受误伤风险时置true重试" },
@@ -1114,6 +1115,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
             MotionBearingDeg = action.TryGetProperty("motionBearingDeg", out var mbd) && mbd.ValueKind == JsonValueKind.Number ? mbd.GetSingle() : null,
             MotionSpeedKmh = action.TryGetProperty("motionSpeedKmh", out var msk) && msk.ValueKind == JsonValueKind.Number ? msk.GetSingle() : null,
             MotionAtTime = action.TryGetProperty("motionAtTime", out var mat) ? mat.GetString() : null,
+            ValidForSeconds = action.TryGetProperty("validForSeconds", out var vf) && vf.ValueKind == JsonValueKind.Number ? vf.GetSingle() : null,
         };
         var label = req.EntityId ?? req.TargetPoint ?? $"{req.BearingDeg:F1}°/{req.DistanceKm:F2}km";
         var stamp = DateTime.Now.ToString("HH:mm:ss");

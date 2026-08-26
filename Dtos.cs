@@ -165,6 +165,11 @@ public class FireMissionRequest
     public int MarkerId { get; set; } = 4;   // which map marker to commandeer for entity targeting
     // 0-100; >=90 (counter-battery) skips the FCS pairing window and wins gun assignment first.
     public int Priority { get; set; } = 50;
+    // Queue-validity window in seconds for time-sensitive missions: if the task is still
+    // WAITING in the FCS queue this long after enqueue, it auto-cancels (firing late at a
+    // departed cluster wastes the shell). Null/0 = valid forever.
+    public float? ValidForSeconds { get; set; }
+
     // Small aim-point nudge in km applied after the target resolves (any of the three paths).
     // Exists so the LLM can shift the burst away from nearby friendlies while keeping the
     // target designation; capped at ±0.5 km — larger shifts should just aim elsewhere.

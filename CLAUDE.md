@@ -164,6 +164,10 @@
 - 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
   → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
   购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
+- 任务时效：fire 的 `validForSeconds`（可选）→ `ArtilleryTask.validForSeconds` +
+  `firstEnqueuedAt`（首次入队时间，抢占回队不重置）；TaskDispatcher 规划轮内快检 +
+  每秒 SweepExpiredTasks 独立扫——**只撤在队列里等待的**，已上炮不受影响；过期走
+  Progress.Failed（"时效已过…自动撤销"）经 RecentOutcomes 以 任务失败(未发射) 事件报 agent。
 - 指挥官直令通道：`POST /command {"text":"..."}` → `commander_order` 事件（source=commander），
   学说权威层级 **指挥官直令 > 统帅部电文 > 战场报告**；agent 事件循环即刻唤醒（工具轮中则经
   随查事件搭车同轮送达）。外部语音方案只需把转写文本 POST 进来。

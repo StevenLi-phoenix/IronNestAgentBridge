@@ -808,7 +808,7 @@ public class AgentBridgeMod : MelonMod
             var brg = (MathF.Atan2(ddx, ddy) * 57.29578f % 360f + 360f) % 360f;
             var distKm = MathF.Sqrt(ddx * ddx + ddy * ddy) * 3.8164f;
             var result = _fcs.EnqueueAimPoint(mapX, mapY, brg, distKm, req.Shell, req.Priority,
-                out var serial, req.EntityId, motion);
+                out var serial, req.EntityId, motion, req.ValidForSeconds);
             if (result == "ok")
             {
                 if (serial > 0)
