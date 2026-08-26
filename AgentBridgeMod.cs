@@ -857,21 +857,38 @@ public class AgentBridgeMod : MelonMod
         var friendliesInside = new List<string>();
         var friendliesNear = new List<string>();
         var hostilesCovered = new List<string>();
+        var civiliansInside = new List<string>();
         foreach (var e in _map.ReadEntities())
         {
             if (!e.IsAlive) continue;
             var dx = 10.016f + e.MapX * 3.8164f - kmX;
             var dy = 5.235f + e.MapY * 3.8164f - kmY;
             var dKm = MathF.Sqrt(dx * dx + dy * dy);
-            var friendly = e.Role.Contains("Ally") || e.Role == "Spotter"
-                           || e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
-                           || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase);
-            if (friendly && dKm <= blastKm)
+            // Civilians are identified by ID, never by faction role — the White Shells
+            // mission tags refugee civilians role=Enemy precisely so they look targetable.
+            var civilian = e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
+                           || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase)
+                           || e.RawId.Contains("hospital", StringComparison.OrdinalIgnoreCase);
+            var friendly = !civilian && (e.Role.Contains("Ally") || e.Role == "Spotter");
+            if (civilian && dKm <= blastKm)
+                civiliansInside.Add($"{e.Id}(距弹着{dKm:F2}km)");
+            else if (friendly && dKm <= blastKm)
                 friendliesInside.Add($"{e.Id}({e.Role},距弹着{dKm:F2}km)");
             else if (friendly && dKm <= blastKm * 1.5f)
                 friendliesNear.Add($"{e.Id}({dKm:F2}km)");
-            else if (!friendly && dKm <= blastKm)
+            else if (!civilian && !friendly && dKm <= blastKm)
                 hostilesCovered.Add($"{e.Id}({dKm:F2}km)");
+        }
+
+        // Civilian protection is NON-OVERRIDABLE: allowDangerouslyFriendlyFire covers
+        // friendly troops accepting risk, never civilians — regardless of what faction the
+        // game or Supreme Command paints them as.
+        if (civiliansInside.Count > 0)
+        {
+            rejection = $"平民保护(不可覆盖) — 已拒绝: {string.Join(", ", civiliansInside)} 在弹着点km({kmX:F2},{kmY:F2})" +
+                        $"的{shell}爆炸半径{blastKm * 1000f:F0}m内。allowDangerouslyFriendlyFire对平民无效; " +
+                        "换弹着点或换更小半径弹种, 平民不是目标——无论其阵营标注是什么";
+            return suffix;
         }
 
         if (friendliesInside.Count > 0 && !allowDanger)
