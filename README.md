@@ -6,6 +6,8 @@
 校射修正,全程自主。完整战役已由 agent 实战通关(含四结局终局关)。
 **项目状态:已完结**——战役通关即目标达成,不再计划新功能;仓库作为成品存档发布。
 
+**演示视频**:[YouTube](https://youtu.be/C-teBlgpal4) · [Bilibili](https://www.bilibili.com/video/BV16v8o66EGX/)
+
 FCS 负责"自动化操作",本 mod 在其上补齐它刻意不做的"战术层"接入点。
 **与 FCS 完全解耦**:仅通过反射对接,FCS 不存在时读取功能照常工作。
 
