@@ -164,6 +164,9 @@
 - 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
   → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
   购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
+- 指挥官直令通道：`POST /command {"text":"..."}` → `commander_order` 事件（source=commander），
+  学说权威层级 **指挥官直令 > 统帅部电文 > 战场报告**；agent 事件循环即刻唤醒（工具轮中则经
+  随查事件搭车同轮送达）。外部语音方案只需把转写文本 POST 进来。
 - 事件游标 `_eventCursor`（agent 线程独占）：主循环取事件推进它；**ExecuteTool 出口把
   工具执行期间新到的事件以"[随查战场新事件]"搭在工具结果尾部**并同步推进游标（主循环不会
   重发）——agent 同轮就能对误伤预警/弹着反应；自身动作触发的事件也会回声在结果里（无害确认）。

@@ -14,6 +14,7 @@ namespace IronNestAgentBridge.Http;
 ///   GET  /events?since=N&amp;timeoutMs=25000   long-poll for new events
 ///   POST /fire                      queue a fire mission (see FireMissionRequest)
 ///   POST /print                     print lines on a teleprinter {"which":"primary","lines":[...]}
+///   POST /command                   commander's verbal order to the agent {"text":"..."} — outranks Supreme Command
 /// </summary>
 public class BridgeServer
 {
@@ -156,6 +157,18 @@ public class BridgeServer
                 TryWrite(ctx, 200, new { result });
                 break;
             }
+            case ("POST", "/command"):
+            {
+                var req = ReadBody<CommandRequest>(ctx);
+                if (string.IsNullOrWhiteSpace(req?.Text))
+                { TryWrite(ctx, 400, new { error = "need {text} — 指挥官口头直令, 权威高于统帅部电文" }); break; }
+                // Highest-authority verbal order from the human commander. Lands as an
+                // event, so the agent loop wakes on it like any battlefield input — but the
+                // doctrine ranks this source ABOVE Supreme Command telegrams.
+                EventLog.Append("commander_order", "commander", req!.Text!.Trim());
+                TryWrite(ctx, 200, new { result = "ok — 直令已下达" });
+                break;
+            }
             case ("POST", "/horn"):
             {
                 var result = MainThread.Run(() => _mod.PullSignalHorn()).GetAwaiter().GetResult();
@@ -195,6 +208,11 @@ public class BridgeServer
                 });
                 break;
         }
+    }
+
+    private class CommandRequest
+    {
+        public string? Text { get; set; }
     }
 
     private class PrintRequest
