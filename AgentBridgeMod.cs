@@ -125,6 +125,13 @@ public sealed class AgentBridgeMod : MelonMod
     private bool _manualMovePending;
     private float _manualMoveSettleAt;
 
+    /// <summary>
+    /// True while the very drag that announced the mission's FIRST placement is still under way.
+    /// A hand drag spans many 0.5s samples, so without this the samples after the first one would
+    /// arm the settle path and announce the same placement a second time as a "moved again" event.
+    /// </summary>
+    private bool _placementDragActive;
+
     // ---------------------------------------------------------------- constants
 
     /// <summary>Map-local movement above which the piece counts as having been dragged.</summary>
@@ -189,6 +196,9 @@ public sealed class AgentBridgeMod : MelonMod
         // transform is not.
         _map.Unbind();
         Agent.GridMath.ResetMapBounds();
+        // Impact state is per-mission: instance ids are recycled across scenes, so a hint id kept
+        // from the previous mission would silently swallow this mission's first impact_hint.
+        _impacts.Reset();
         _teleprinters.Reset();
 
         _baselineCamera = null;
@@ -621,9 +631,11 @@ public sealed class AgentBridgeMod : MelonMod
     /// Watches the draggable turret piece for the commander's own hand.
     ///
     /// The first placement of a mission is announced as soon as it is seen — that is the moment
-    /// the assumed position stops being a default. Later moves are announced only once the piece
-    /// has settled and only when it actually went somewhere, so dragging it across the table
-    /// produces one event at the destination instead of a stream of them along the way.
+    /// the assumed position stops being a default — and the rest of THAT drag stays silent, or the
+    /// same placement would be announced a second time as a "moved again" event a couple of
+    /// seconds later. Later moves are announced only once the piece has settled and only when it
+    /// actually went somewhere, so dragging it across the table produces one event at the
+    /// destination instead of a stream of them along the way.
     /// </summary>
     private void DetectManualCalibration(float now)
     {
@@ -639,20 +651,35 @@ public sealed class AgentBridgeMod : MelonMod
 
         if (moved)
         {
-            _manualMovePending = true;
             _manualMoveSettleAt = now + ManualSettleSeconds;
 
             if (!TurretCalibrated)
             {
                 TurretCalibrated = true;
                 _manualMovePending = false;
+                _placementDragActive = true;
                 _lastReportedTurretKm = MapFrame.LocalToKm(local.x, local.y);
                 EventLog.Append("turret_position", "map",
                     "turret piece was moved manually — treated as calibrated");
+                return;
             }
 
+            if (_placementDragActive)
+            {
+                // Same drag that just produced the first-placement event: follow the piece so the
+                // baseline ends up where the hand releases it, and stay silent. Announcing this
+                // as a re-move would be false — nothing has been moved AGAIN yet.
+                _lastReportedTurretKm = MapFrame.LocalToKm(local.x, local.y);
+                return;
+            }
+
+            _manualMovePending = true;
             return;
         }
+
+        // Still. The first-placement drag is only over once the piece has settled for the same
+        // window a normal move has to settle for; a momentary pause mid-drag is not a release.
+        if (_placementDragActive && now >= _manualMoveSettleAt) _placementDragActive = false;
 
         if (!_manualMovePending || now < _manualMoveSettleAt) return;
         _manualMovePending = false;
@@ -701,6 +728,7 @@ public sealed class AgentBridgeMod : MelonMod
             _lastPieceLocal = _map.TurretLocalOnMap();
             _lastReportedTurretKm = (kmX, kmY);
             _manualMovePending = false;
+            _placementDragActive = false;
         }
 
         EventLog.Append("turret_position", "map", message);
@@ -722,11 +750,16 @@ public sealed class AgentBridgeMod : MelonMod
     /// records a cancellation in its outcomes, so the fired/failed reconciliation would catch it
     /// anyway, but a task that is definitely gone must not linger here either. A refused cancel
     /// leaves the ledger alone — the task is still live and still ours to track.
+    ///
+    /// The success token of the cancel channel is <c>"cancelled: …"</c>, NOT the <c>"ok"</c> that
+    /// the enqueue and adjust channels use (<see cref="FcsGateway.CancelPending"/>). Testing for
+    /// "ok" here would make this cleanup dead code and reduce the double safety promised by
+    /// REQUIREMENTS §4 to a single dependency on FCS's own outcome record.
     /// </summary>
     public string CancelPendingFcsTask(int serial)
     {
         var result = _fcs.CancelPending(serial);
-        if (result.StartsWith("ok", StringComparison.Ordinal)) _shells.Forget(serial);
+        if (result.StartsWith("cancelled", StringComparison.Ordinal)) _shells.Forget(serial);
 
         EventLog.Append("fcs_task_update", "fcs", $"cancel #{serial}: {result}");
         return result;
@@ -845,6 +878,7 @@ public sealed class AgentBridgeMod : MelonMod
         _lastPieceLocal = null;
         _lastReportedTurretKm = null;
         _manualMovePending = false;
+        _placementDragActive = false;
 
         LastFcsSummary = "";
 

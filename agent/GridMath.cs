@@ -70,14 +70,24 @@ public static class GridMath
     }
 
     /// <summary>
-    /// km to display grid, same formula as the FCS ConvertPosition. Out-of-range x prints "#"
-    /// for the column letter: a negative x must not truncate back into [0,26) and pretend to be
-    /// column A.
+    /// km to display grid, same formula as the FCS ConvertPosition.
+    ///
+    /// Out of range on EITHER axis prints "#" for that axis: truncation towards zero would let
+    /// x = -0.5 pretend to be column A, y = -0.5 pretend to be row 1, and either sub-cell digit
+    /// come back negative ("D1 0:-5"). A grid string that looks plausible but is wrong is worse
+    /// than one that visibly refuses, because it reaches the model as an impact report.
     /// </summary>
     public static string GridOf((float x, float y) p)
     {
-        var col = p.x >= 0f && p.x < 26f ? ((char)('A' + (int)p.x)).ToString() : "#";
-        return $"{col}{(int)p.y + 1} {(int)(p.x * 10f) % 10}:{(int)(p.y * 10f) % 10}";
+        var xInRange = p.x >= 0f && p.x < 26f;
+        var yInRange = p.y >= 0f;
+
+        var col = xInRange ? ((char)('A' + (int)p.x)).ToString() : "#";
+        var row = yInRange ? ((int)p.y + 1).ToString(CultureInfo.InvariantCulture) : "#";
+        var subCol = xInRange ? ((int)(p.x * 10f) % 10).ToString(CultureInfo.InvariantCulture) : "#";
+        var subRow = yInRange ? ((int)(p.y * 10f) % 10).ToString(CultureInfo.InvariantCulture) : "#";
+
+        return $"{col}{row} {subCol}:{subRow}";
     }
 
     // ---------------------------------------------------------------- map bounds
@@ -229,11 +239,18 @@ public static class GridMath
             }
         }
 
+        // A "near" that cannot be read is an ERROR, never a silent fall-through to the ambiguous
+        // branch: the model supplied it precisely to disambiguate, and degrading it would answer a
+        // question it did not ask. A wrong value kind is treated the same way as an unparseable
+        // string — null alone means "not supplied".
         (double x, double y)? near = null;
-        if (args.ValueKind == JsonValueKind.Object
-            && args.TryGetProperty("near", out var nearElement)
-            && nearElement.ValueKind == JsonValueKind.String)
+        if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty("near", out var nearElement)
+            && nearElement.ValueKind != JsonValueKind.Null
+            && nearElement.ValueKind != JsonValueKind.Undefined)
         {
+            if (nearElement.ValueKind != JsonValueKind.String)
+                return Error($"near must be a point string like 'G6 5:3' or 'kmX,kmY', got {nearElement.ValueKind}");
+
             var spec = nearElement.GetString() ?? "";
             if (spec.Trim().Length > 0)
             {

@@ -33,12 +33,6 @@ public sealed class FcsGateway
     /// <summary>Every write into a public contract field goes through this (§3.4-10).</summary>
     private const BindingFlags PublicInstance = BindingFlags.Instance | BindingFlags.Public;
 
-    // Coordinate protocol, shared with the bridge's own map math: Draggable Surface local
-    // units × 3.8164 = km, km frame origin offset (10.016, 5.235).
-    private const float LocalToKmScale = 3.8164f;
-    private const float KmFrameOriginX = 10.016f;
-    private const float KmFrameOriginY = 5.235f;
-
     // Fully qualified names inside the FCS Logic assembly. Resolved against the assembly of the
     // *current* FSC instance so the types land in the ALC that is alive right now.
     private const string ArtilleryTaskTypeName = "IronNestFCS.Logic.FCS.ArtilleryTask";
@@ -759,11 +753,17 @@ public sealed class FcsGateway
     // Reflection plumbing
     // ---------------------------------------------------------------------------------------
 
-    /// <summary>Draggable Surface local units → km frame. Coordinate protocol constants, verbatim.</summary>
-    private static Vector3 LocalToKmFrame(float localX, float localY) => new(
-        KmFrameOriginX + localX * LocalToKmScale,
-        KmFrameOriginY + localY * LocalToKmScale,
-        0f);
+    /// <summary>
+    /// Draggable Surface local units → km frame, through the bridge's single source for the three
+    /// calibration constants (gamestate §0.1: one source, values unchanged). This is what writes km-frame
+    /// coordinates into <c>ArtilleryTask.position</c>, so a private copy of the constants here
+    /// would drift into something indistinguishable from a gunnery error.
+    /// </summary>
+    private static Vector3 LocalToKmFrame(float localX, float localY)
+    {
+        var km = GameState.MapFrame.LocalToKm(localX, localY);
+        return new Vector3(km.x, km.y, 0f);
+    }
 
     /// <summary>
     /// The two Logic types, taken from the assembly of the current FSC instance so they belong to

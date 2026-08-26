@@ -734,16 +734,31 @@ public sealed class FdoAgent
         }
     }
 
+    /// <summary>Lowest / highest token id that belongs to the player. See <see cref="AppendMarkers"/>.</summary>
+    private const int FirstPlayerMarkerId = 1;
+
+    private const int LastPlayerMarkerId = 8;
+
     /// <summary>
     /// The player's own artillery tokens. The doctrine promises the model that these are hints
     /// placed by hand, so they have to actually appear. Grid only: a token is a suggestion, and
     /// pretending it carries firing data would invite shooting at it without solving first.
+    ///
+    /// T9 and T10 are filtered out: the snapshot's marker list is every numeric token on the
+    /// table, but those two are driven by FCS twice a second onto the left and right gun's current
+    /// aim point (and they stay there after firing). Reporting them under the "placed by hand"
+    /// heading would feed the model its own aim points back as if they were the commander's hints —
+    /// exactly what the doctrine block tells it they are not.
     /// </summary>
     private static void AppendMarkers(StringBuilder sb, StateSnapshotDto s)
     {
-        if (s.Markers.Count == 0) return;
+        var tokens = s.Markers
+            .Where(m => m.Id is >= FirstPlayerMarkerId and <= LastPlayerMarkerId)
+            .Select(m => $"T{m.Id} {GridMath.GridOf(MapFrame.LocalToKm(m.MapX, m.MapY))}")
+            .ToList();
 
-        var tokens = s.Markers.Select(m => $"T{m.Id} {GridMath.GridOf(MapFrame.LocalToKm(m.MapX, m.MapY))}");
+        if (tokens.Count == 0) return;
+
         sb.AppendLine("玩家标记(玩家手工放置的兴趣点/目标提示, 非系统情报): " + string.Join(", ", tokens));
     }
 

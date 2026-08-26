@@ -71,6 +71,13 @@ public sealed class FireMissionPipeline
         var turretLocal = _map.TurretLocalOnMap();
         var turretKm = MapFrame.LocalToKm(turretLocal);
 
+        // ---- 0. shell id normalisation, once, at the entry ------------------------------------
+        // The model is shown the game's card ids (PCLM, SMOKE…) while FCS's bullet enum spells
+        // some of them differently (PLCM, SMK). Normalising here — and nowhere else — keeps the
+        // range table, the blast survey, the ledger, the receipt and FCS's Enum.Parse all talking
+        // about the same shell. Blank is left alone so it still earns the "unknown shell" refusal.
+        var shell = string.IsNullOrWhiteSpace(req.Shell) ? req.Shell : AmmoReader.NormalizeShellId(req.Shell);
+
         // ---- 1. target resolution: entityId beats targetPoint beats bearing+distance ---------
         Vector3 aimLocal;
         string label;
@@ -137,9 +144,9 @@ public sealed class FireMissionPipeline
         var distanceKm = MapFrame.DistanceKm(delta);
 
         var specs = AmmoReader.ReadShellSpecs();
-        var maxRange = MaxRangeKm(req.Shell, specs);
+        var maxRange = MaxRangeKm(shell, specs);
         if (distanceKm > maxRange)
-            return $"distance {distanceKm:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
+            return $"distance {distanceKm:F1}km exceeds {shell} max range {maxRange:F1}km — rejected";
 
         // ---- 5. no budget gate on fire, deliberately ------------------------------------------
         // Some missions start at zero requisition points with shells already in the chamber, and
@@ -150,7 +157,7 @@ public sealed class FireMissionPipeline
         // ---- 6. safety layer -------------------------------------------------------------------
         var entities = _map.ReadEntities();
         var suffix = BlastSurvey.SurveyBlast(
-            req.Shell, aimKm.x, aimKm.y, req.AllowDangerouslyFriendlyFire,
+            shell, aimKm.x, aimKm.y, req.AllowDangerouslyFriendlyFire,
             entities, specs, out var rejection, out var hostilesInRadius);
         if (rejection != null) return rejection;
 
@@ -165,19 +172,19 @@ public sealed class FireMissionPipeline
         // ---- 8. blind-fire warning (a warning, never a refusal) ---------------------------------
         // Pre-planned interdiction and predicted fire are legitimate and must go through; using a
         // killing shell as a reconnaissance probe is what gets called out.
-        if (!BlastSurvey.IsHarmless(req.Shell)
+        if (!BlastSurvey.IsHarmless(shell)
             && string.IsNullOrWhiteSpace(req.EntityId)
             && hostilesInRadius == 0
             && motion == null)
         {
-            suffix += $"; ⚠盲射警告: {req.Shell}是杀伤弹而弹着半径内无已揭示敌目标——侦察盲射必须用STAR, 校射用DRIL; " +
+            suffix += $"; ⚠盲射警告: {shell}是杀伤弹而弹着半径内无已揭示敌目标——侦察盲射必须用STAR, 校射用DRIL; " +
                       "只有明确的预判/封锁打击才允许杀伤弹盲射, 否则立即cancel_pending_task省下这笔钱";
         }
 
         // ---- 9. enqueue as a pure aim point -----------------------------------------------------
         var trackEntityId = string.IsNullOrWhiteSpace(req.EntityId) ? null : req.EntityId;
         var result = _fcs.EnqueueAimPoint(
-            aimLocal.x, aimLocal.y, bearingDeg, distanceKm, req.Shell, req.Priority,
+            aimLocal.x, aimLocal.y, bearingDeg, distanceKm, shell, req.Priority,
             out var serial, trackEntityId, motion, req.ValidForSeconds);
 
         if (!string.Equals(result, "ok", StringComparison.Ordinal)) return result + suffix;
@@ -187,11 +194,11 @@ public sealed class FireMissionPipeline
         // closed. Report the ambiguity instead of inventing certainty in either direction.
         if (serial <= 0) return "FCS 未返回任务编号(版本不兼容?), 任务状态未知" + suffix;
 
-        _shells.Register(serial, label, req.Shell, aimKm.x, aimKm.y,
+        _shells.Register(serial, label, shell, aimKm.x, aimKm.y,
             distanceKm / ShellSpeedKmPerSecond + FlightOverheadSeconds);
 
         EventLog.Append("fcs_task_update", "fcs",
-            $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as #{serial}");
+            $"fire mission queued on {label} ({shell}, P{req.Priority}) as #{serial}");
 
         return $"ok (#{serial}){suffix}";
     }

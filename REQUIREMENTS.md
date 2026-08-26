@@ -193,3 +193,24 @@ IronNestAgentBridge/
 - `RecentOutcomes` 失败前缀 `Failed: {reason}`(冒号+空格),桥按前缀切分(3.1-12)。
 - 弹药/卡片 id 归一化怪癖(SMOKE→SMK、PCLM→PLCM、去 Shell)以 FCS 侧
   `NormalizeCardId` 为准,桥白名单双拼兼容。
+
+## 附录:实现归档——已接受偏离(验证阶段裁定保留)
+
+需修复项(13 条,含两条跨仓 bug:cancel 簿记判据、PCLM→PLCM 归一缺失)已全部修复;
+以下 24 条为验证员核实"合理但文档未覆盖"的偏离,裁定保留:
+
+- **fire-core**:世界钟候选清单只在首扫打一次日志;`CurrentTime≤0` 也清时钟缓存(代价:
+  无世界钟关卡每 0.5s 重枚举);CG 判据改 `GetInstanceID` 比较(Il2Cpp 包装更稳)并在
+  基线丢失时补发 ended 事件;AdjustFire 也做射程校验(fire 之外的一致化)。
+- **agent-loop**:工具回执 JSON 用 UnsafeRelaxedJsonEscaping(中文不再 \uXXXX,省 token);
+  参数读取按 ValueKind 宽容降级(类型错字段静默丢弃而非整轮报错)。
+- **fcs-gw**:module/FSC 缓存退化为诊断用途(每次重读,§3.4-2 的必然结果);新增
+  `{member} failed: {message}` 错误串族(不抛异常原则的产物);Invoke 异常映射 NoApi;
+  `EnqueueByBearing` 增加 localX/localY 前置形参以填真实 position。
+- **gamestate**:买钮查找改子树 `GetComponentsInChildren<LookAtTarget>`;`/find` 截断
+  标记以 `note` 字段承载;ImpactReader 改 30s 双缺席清扫(修复轮加固)。
+- **llm-plumb**:JSONL 行终止符 LF;目录创建每次锁内调用;usage 统一在流结束后上报
+  (裁决 3.6-6 推论,取消窗口内该轮不计费)。
+- **math**:全模块 float 口径;JSON 输出宽松转义;空白表达式统一 `need expression`。
+- **infra-ui**:显示宽截断也按 CJK 计 2;主线程队列清空复用超时异常文案;csproj
+  `CodePage 65001` 防御性加固。

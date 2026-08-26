@@ -28,8 +28,15 @@ FCS 负责"自动化操作",本 mod 在其上补齐它刻意不做的"战术层"
 
 ## HTTP API(127.0.0.1:17171,仅本机,默认关闭需在配置开启)
 
-- `GET /state` — 全量快照(地图实体/打字机/火炮/FCS 队列/在途炮弹/余额/关卡与模式)
-- `GET /events?since=N&timeoutMs=25000` — 长轮询事件流
+- `GET /state` — 全量快照(地图实体/打字机/火炮/FCS 队列/在途炮弹/余额/关卡与模式);
+  响应带 `latestSeq`(生成快照那一刻的事件游标),用来和事件流对齐
+- `GET /events?since=N&timeoutMs=25000` — 长轮询事件流,响应
+  `{"latest": 最新seq, "oldest": 缓冲区最早seq, "events": [...]}`
+  - **`since` 缺省 = 当前 `latest`**(即"只要从现在起发生的事"),**历史刻意不重放**——
+    新客户端不传 `since` 会静默丢掉全部已缓冲事件;要历史必须显式传 `since=0`。
+    `since` 写成非法值等同缺省。
+  - 用 `oldest` 判断断档:若自己的游标 < `oldest`,说明这段事件已被环形缓冲挤掉或被
+    重置清空(F9/新任务),中间有洞,应重新拉 `/state` 而不是假装连续。
 - `POST /fire` — 排火力任务:`{"entityId"|"target"|"bearingDeg"+"distanceKm", "shell", "priority", "validForSeconds", ...}`
 - `POST /adjust` — 改瞄已排任务(按 #N)
 - `POST /command` — 指挥官直令(中文体请以 UTF-8 文件 `--data-binary` 发送)
@@ -58,7 +65,7 @@ ApiKey = "sk-..."
 BaseUrl = "https://api.deepseek.com"
 Model = "deepseek-v4-flash"
 MaxTokens = 393216
-AutoStart = true
+MaxToolRounds = 64
 EnableHttpApi = true
 ```
 

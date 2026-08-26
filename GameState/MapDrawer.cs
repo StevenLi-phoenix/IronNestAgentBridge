@@ -41,10 +41,12 @@ public static class MapDrawer
         Il2CppArrayBase<MapMarkerPlacer> placers = found;
 
         // Out of range is a caller bug, not something to paper over by silently drawing on a
-        // different placer: the HTTP layer turns this into a 400.
+        // different placer: the HTTP layer turns this into a 400. The message must KEEP STARTING
+        // with "placerIndex out of range" — BridgeServer matches that exact prefix to pick 400
+        // over the business-refusal 409 envelope.
         if (placerIndex < 0 || placerIndex >= placers.Length)
         {
-            return $"placerIndex {placerIndex} out of range (0..{placers.Length - 1})";
+            return $"placerIndex out of range: {placerIndex} (0..{placers.Length - 1})";
         }
 
         try

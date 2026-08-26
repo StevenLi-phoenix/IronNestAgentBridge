@@ -25,12 +25,19 @@ public static class AmmoReader
     private static readonly Dictionary<string, ShellSpecDto> SpecCache = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Card id normalisation, shared with <see cref="RequisitionOperator"/>. The quirks are the
-    /// game's: the asset ids spell SMOKE where everything else says SMK, and some carry a
-    /// redundant "Shell" suffix.
+    /// Card id normalisation, shared with <see cref="RequisitionOperator"/> and with the fire
+    /// path. The quirks are the game's: the asset ids spell SMOKE where everything else says SMK,
+    /// the cluster shell's asset id is PCLM while the FCS bullet enum member is PLCM, and some ids
+    /// carry a redundant "Shell" suffix.
+    ///
+    /// The three replacements and their order are a VERBATIM copy of FCS's
+    /// <c>PurchaseDeck.NormalizeCardId</c> (REQUIREMENTS §4: the FCS side is authoritative for
+    /// these quirks). Dropping PCLM→PLCM is what once made the cluster shell unfireable — the
+    /// model asks for the spelling it is shown, PCLM, and FCS's <c>Enum.Parse</c> only knows PLCM.
+    /// The agent's shell whitelist keeps BOTH spellings so either one still classifies as ammunition.
     /// </summary>
     public static string NormalizeShellId(string id)
-        => id.Replace("SMOKE", "SMK").Replace("Shell", "").Trim();
+        => id.Replace("SMOKE", "SMK").Replace("PCLM", "PLCM").Replace("Shell", "").Trim();
 
     // ---------------------------------------------------------------- cards
 

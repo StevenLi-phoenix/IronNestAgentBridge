@@ -18,7 +18,11 @@ public sealed class ImpactReader
     /// <summary>map-local movement below this is the same impact re-read, not a new one.</summary>
     private const float ImpactEpsilonLocal = 0.01f;
 
-    /// <summary>How often destroyed correction hints are swept out of the reported set.</summary>
+    /// <summary>
+    /// How often destroyed objects are swept out of the state tables (correction hints and impact
+    /// history alike). Deliberately slow: a marker or hint that is merely deactivated for a moment
+    /// must not lose its record and come back as a fresh broadcast.
+    /// </summary>
     private const float HintSweepSeconds = 30f;
 
     /// <summary>
@@ -28,8 +32,13 @@ public sealed class ImpactReader
     /// </summary>
     private readonly Dictionary<int, Vector3> _lastImpactLocal = new();
 
+    /// <summary>Impact keys seen missing at the previous sweep; dropped if missing again.</summary>
+    private readonly HashSet<int> _impactPruneCandidates = new();
+
     /// <summary>Correction hints already broadcast, so each yellow arrow is narrated once.</summary>
     private readonly HashSet<int> _reportedCorrections = new();
+
+    private float _nextImpactSweep;
 
     private float _nextHintSweep;
 
@@ -37,7 +46,9 @@ public sealed class ImpactReader
     public void Reset()
     {
         _lastImpactLocal.Clear();
+        _impactPruneCandidates.Clear();
         _reportedCorrections.Clear();
+        _nextImpactSweep = 0f;
         _nextHintSweep = 0f;
     }
 
@@ -116,16 +127,34 @@ public sealed class ImpactReader
             EventLog.Append("shell_impact", "map", text);
         }
 
-        // Impact markers are destroyed and rebuilt constantly; without pruning the table grows
-        // for the whole mission and recycled instance ids would eventually collide with it.
-        if (_lastImpactLocal.Count > live.Count)
+        SweepImpactHistory(live);
+    }
+
+    /// <summary>
+    /// Bounds the impact table without ever dropping a live marker's de-duplication record.
+    ///
+    /// Pruning "everything missing from this poll's live set" would be wrong: a single unreadable
+    /// poll (an Il2Cpp read that throws, a marker deactivated for an instant, an instance id that
+    /// reads back 0) drops the record, and the next poll then sees <c>instanceChanged</c> and
+    /// re-broadcasts the SAME impact — which also calls <c>resolveImpact</c> again and settles a
+    /// second in-flight shell that never landed. So a key must be absent from two consecutive
+    /// sweeps, 30 s apart, before it is dropped; transient dropouts can never survive that.
+    /// </summary>
+    private void SweepImpactHistory(HashSet<int> live)
+    {
+        var now = Il2CppSafe.Get(() => Time.realtimeSinceStartup, 0f);
+        if (now < _nextImpactSweep) return;
+        _nextImpactSweep = now + HintSweepSeconds;
+
+        foreach (var key in _impactPruneCandidates)
         {
-            var stale = new List<int>();
-            foreach (var key in _lastImpactLocal.Keys)
-            {
-                if (!live.Contains(key)) stale.Add(key);
-            }
-            foreach (var key in stale) _lastImpactLocal.Remove(key);
+            if (!live.Contains(key)) _lastImpactLocal.Remove(key);
+        }
+
+        _impactPruneCandidates.Clear();
+        foreach (var key in _lastImpactLocal.Keys)
+        {
+            if (!live.Contains(key)) _impactPruneCandidates.Add(key);
         }
     }
 
