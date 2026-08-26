@@ -1,144 +1,253 @@
-using Il2Cpp;
+﻿using Il2Cpp;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
 namespace IronNestAgentBridge.GameState;
 
 /// <summary>
-/// Reads ACTUAL shell impact points from the game's impact-recon system
-/// (ImpactMarkerManager's per-gun impact markers on the tactical map). The systematic
-/// offset between intended aim and actual impact is exactly the assumed-origin error,
-/// enabling registration-fire recalibration by the agent.
+/// Real impact points and the game's own miss feedback.
+///
+/// The systematic gap between where we aimed and where the shell actually landed IS the error in
+/// our assumed turret position — it is the only evidence registration fire produces, so nothing
+/// here may be smoothed, averaged or suppressed.
+///
+/// Stateful; <see cref="Reset"/> clears everything for F9 / a new mission.
 /// </summary>
-public class ImpactReader
+public sealed class ImpactReader
 {
+    /// <summary>map-local movement below this is the same impact re-read, not a new one.</summary>
+    private const float ImpactEpsilonLocal = 0.01f;
+
+    /// <summary>How often destroyed correction hints are swept out of the reported set.</summary>
+    private const float HintSweepSeconds = 30f;
+
+    /// <summary>
+    /// Last impact position per marker INSTANCE, not per marker-list index. Indices are recycled
+    /// between guns; instance ids are not, and a stale index once made one gun's impact look like
+    /// the other's.
+    /// </summary>
     private readonly Dictionary<int, Vector3> _lastImpactLocal = new();
-    private readonly Dictionary<int, int> _lastInstanceIds = new();
+
+    /// <summary>Correction hints already broadcast, so each yellow arrow is narrated once.</summary>
     private readonly HashSet<int> _reportedCorrections = new();
 
+    private float _nextHintSweep;
+
+    /// <summary>Clears impact history and the reported-hint set.</summary>
     public void Reset()
     {
         _lastImpactLocal.Clear();
-        _lastInstanceIds.Clear();
         _reportedCorrections.Clear();
+        _nextHintSweep = 0f;
     }
 
     /// <summary>
-    /// Poll impact markers; emit an event for each new impact. "New" = the marker moved OR
-    /// the marker instance changed (a repeat shot on the same spot re-spawns/re-binds the
-    /// marker without moving it). The resolver callback settles the matching in-flight
-    /// shell and returns its identity (#N) so the event names what just landed.
+    /// Polls the impact markers and then the correction hints.
     /// </summary>
-    public void PollAndEmitEvents(Transform? mapSurface, Func<float, float, string?>? resolveImpact = null)
+    /// <param name="mapSurface">From <see cref="MapReader.MapSurface"/>; null means unbound.</param>
+    /// <param name="resolveImpact">
+    /// Given an impact in km, settles the nearest in-flight shell and returns its identity string
+    /// (e.g. <c>#12 K4 5:0 (HE)</c>), or null when nothing matches. Supplied by the shell tracker.
+    /// </param>
+    public void PollAndEmitEvents(Transform? mapSurface, Func<float, float, string?>? resolveImpact)
     {
-        if (mapSurface == null)
-            return;
+        if (mapSurface == null) return;
 
-        ImpactMarkerManager? manager = null;
-        try { manager = ImpactMarkerManager.Instance; } catch { }
-        if (manager == null || manager.markerDataList == null)
-            return;
+        PollImpacts(mapSurface, resolveImpact);
+        PollCorrectionHints(mapSurface);
+    }
 
-        for (var i = 0; i < manager.markerDataList.Count; i++)
+    // ---------------------------------------------------------------- real impacts
+
+    private void PollImpacts(Transform mapSurface, Func<float, float, string?>? resolveImpact)
+    {
+        ImpactMarkerManager? manager;
+        try { manager = ImpactMarkerManager.Instance; }
+        catch { return; }
+        if (manager == null) return;
+
+        var markers = Il2CppSafe.GetRef(() => manager.markerDataList);
+        if (markers == null) return;
+
+        var count = Il2CppSafe.Get(() => markers.Count, 0);
+        var live = new HashSet<int>();
+
+        for (var i = 0; i < count; i++)
         {
-            var data = manager.markerDataList[i];
-            var instance = data?.activeMarkerInstance;
-            if (instance == null || !instance.activeInHierarchy)
-                continue;
+            var index = i;
+            var data = Il2CppSafe.GetRef(() => markers[index]);
+            if (data == null) continue;
 
-            var instanceId = instance.GetInstanceID();
-            var instanceChanged = !_lastInstanceIds.TryGetValue(i, out var prevId) || prevId != instanceId;
-            _lastInstanceIds[i] = instanceId;
+            var instance = Il2CppSafe.GetRef(() => data.activeMarkerInstance);
+            if (instance == null) continue;
+            if (!Il2CppSafe.Get(() => instance.activeInHierarchy, false)) continue;
 
-            var local = mapSurface.InverseTransformPoint(instance.transform.position);
-            if (!instanceChanged
-                && _lastImpactLocal.TryGetValue(i, out var prev)
-                && Mathf.Abs(local.x - prev.x) < 0.01f && Mathf.Abs(local.y - prev.y) < 0.01f)
-                continue;
-            _lastImpactLocal[i] = local;
+            var instanceId = Il2CppSafe.Get(() => instance.GetInstanceID(), 0);
+            if (instanceId == 0) continue;
+            live.Add(instanceId);
 
-            var kmX = 10.016f + local.x * 3.8164f;
-            var kmY = 5.235f + local.y * 3.8164f;
-            var gunName = "";
-            try { gunName = data!.gun?.gameObject?.name ?? $"gun{i}"; } catch { gunName = $"gun{i}"; }
+            // A repeat shot at the same aim point re-creates or re-binds the marker WITHOUT
+            // moving it, so a fresh instance counts as a new impact all on its own.
+            var instanceChanged = !_lastImpactLocal.TryGetValue(instanceId, out var previous);
+
+            var local = Il2CppSafe.Get(() => mapSurface.InverseTransformPoint(instance.transform.position),
+                Vector3.zero);
+
+            var moved = Math.Abs(local.x - previous.x) >= ImpactEpsilonLocal
+                     || Math.Abs(local.y - previous.y) >= ImpactEpsilonLocal;
+
+            _lastImpactLocal[instanceId] = local;
+            if (!instanceChanged && !moved) continue;
+
+            var km = MapFrame.LocalToKm(local);
+            var gunName = Il2CppSafe.Get(() => data.gun.gameObject.name, $"gun{index}");
 
             string? settled = null;
-            try { settled = resolveImpact?.Invoke(kmX, kmY); } catch { }
-            EventLog.Append("shell_impact", "map",
-                $"实际弹着({gunName}): km({kmX:F2},{kmY:F2}) [{Agent.GridMath.GridOf((kmX, kmY))}]" +
-                (settled != null ? $" → 在途任务 {settled} 已落地销账" : ""));
+            if (resolveImpact != null)
+            {
+                try { settled = resolveImpact(km.x, km.y); }
+                catch { settled = null; }
+            }
+
+            var grid = Agent.GridMath.GridOf(km);
+            var text = $"实际弹着({gunName}): km({km.x:F2},{km.y:F2}) [{grid}]";
+            if (settled != null) text += $" → 在途任务 {settled} 已落地销账";
+
+            EventLog.Append("shell_impact", "map", text);
         }
 
-        PollCorrectionHints();
+        // Impact markers are destroyed and rebuilt constantly; without pruning the table grows
+        // for the whole mission and recycled instance ids would eventually collide with it.
+        if (_lastImpactLocal.Count > live.Count)
+        {
+            var stale = new List<int>();
+            foreach (var key in _lastImpactLocal.Keys)
+            {
+                if (!live.Contains(key)) stale.Add(key);
+            }
+            foreach (var key in stale) _lastImpactLocal.Remove(key);
+        }
     }
 
-    /// <summary>
-    /// The game's own miss feedback: each impact spawns an ImpactVisualCorrections that shows
-    /// the player a yellow arrow toward the nearest target plus a coarse range text. Both are
-    /// deliberately imprecise (tiered direction error, quantized distance), so we relay exactly
-    /// the player-visible fidelity: a bearing SECTOR and the displayed range string — never the
-    /// underlying target position (that would leak fog-of-war intel the player doesn't have).
-    /// </summary>
-    private void PollCorrectionHints()
-    {
-        ImpactVisualCorrections[] hints;
-        try { hints = UnityEngine.Object.FindObjectsOfType<ImpactVisualCorrections>(); }
-        catch { return; }
+    // ---------------------------------------------------------------- correction hints
 
-        foreach (var hint in hints)
+    /// <summary>
+    /// Retells the game's own miss feedback: a yellow arrow towards the nearest target plus a
+    /// coarse distance caption. Both are deliberately imprecise on the game's side.
+    ///
+    /// Secrecy invariant: only the fidelity the player can see on screen may be repeated. The
+    /// target's real position, the error tier and the error offset are all knowledge the player
+    /// does not have — leaking any of them is map hacking.
+    /// </summary>
+    private void PollCorrectionHints(Transform mapSurface)
+    {
+        Il2CppArrayBase<ImpactVisualCorrections>? found;
+        try { found = UnityEngine.Object.FindObjectsOfType<ImpactVisualCorrections>(); }
+        catch { return; }
+        if (found == null) return;
+
+        Il2CppArrayBase<ImpactVisualCorrections> hints = found;
+        var count = Il2CppSafe.Get(() => hints.Length, 0);
+        var live = new HashSet<int>();
+
+        for (var i = 0; i < count; i++)
         {
+            var index = i;
+            var hint = Il2CppSafe.GetRef(() => hints[index]);
+            if (hint == null) continue;
+
             int key;
-            bool evaluated, isHit;
+            bool evaluated;
+            bool isHit;
             try
             {
                 key = hint.GetInstanceID();
                 evaluated = hint._initialEvaluated;
                 isHit = hint._isHit;
             }
-            catch { continue; }
-
-            if (!evaluated || !_reportedCorrections.Add(key))
+            catch
+            {
                 continue;
+            }
+
+            live.Add(key);
+
+            // The game has not finished judging this impact yet.
+            if (!evaluated) continue;
+
+            // One broadcast per hint, ever.
+            if (!_reportedCorrections.Add(key)) continue;
 
             Vector2 impactLocal;
-            try { impactLocal = hint._impactLocalPos; } catch { _reportedCorrections.Remove(key); continue; }
-            var kmX = 10.016f + impactLocal.x * 3.8164f;
-            var kmY = 5.235f + impactLocal.y * 3.8164f;
-            var at = $"km({kmX:F2},{kmY:F2}) [{Agent.GridMath.GridOf((kmX, kmY))}]";
+            try
+            {
+                impactLocal = hint._impactLocalPos;
+            }
+            catch
+            {
+                // Put the key back so a later poll can retry this hint.
+                _reportedCorrections.Remove(key);
+                continue;
+            }
+
+            var km = MapFrame.LocalToKm(impactLocal.x, impactLocal.y);
+            var at = $"km({km.x:F2},{km.y:F2}) [{Agent.GridMath.GridOf(km)}]";
 
             if (isHit)
             {
-                EventLog.Append("impact_hint", "map", $"弹着确认: {at} 命中(爆炸半径内有目标, 无修正提示)");
+                EventLog.Append("impact_hint", "map",
+                    $"弹着确认: {at} 命中(爆炸半径内有目标, 无修正提示)");
                 continue;
             }
 
-            // Displayed bearing = true impact→target bearing + the per-target error offset the
-            // game rolled for this arrow. Sector half-width comes from the active direction tier;
-            // the offset's sign convention doesn't matter — truth stays inside ±error either way.
-            float displayedBearing;
-            try
-            {
-                if (hint._currentTarget == null)
-                    continue;   // no target resolved — the game shows no arrow either
-                var target = hint._currentTargetLocalPos;
-                var dx = target.x - impactLocal.x;
-                var dy = target.y - impactLocal.y;
-                if (dx * dx + dy * dy < 1e-8f)
-                    continue;
-                displayedBearing = Mathf.Atan2(dx, dy) * Mathf.Rad2Deg;
-                if (hint._errorOffsetValid)
-                    displayedBearing += hint._directionErrorOffsetDeg;
-                displayedBearing = (displayedBearing % 360f + 360f) % 360f;
-            }
+            var target = Il2CppSafe.GetRef(() => hint._currentTarget);
+            // No arrow is drawn either, so there is nothing to retell.
+            if (target == null) continue;
+
+            Vector2 targetLocal;
+            try { targetLocal = hint._currentTargetLocalPos; }
             catch { continue; }
 
-            // Relay only what the player sees: the arrow's rough bearing and the in-game
-            // range text verbatim. How imprecise either one is stays undisclosed — the
-            // player doesn't know the tier's error parameters, so neither does the agent.
-            string range = "";
-            try { range = hint.rangeText?.text ?? ""; } catch { }
+            var dx = targetLocal.x - impactLocal.x;
+            var dy = targetLocal.y - impactLocal.y;
+            if (dx * dx + dy * dy < 1e-8f) continue;
+
+            var bearing = Mathf.Atan2(dx, dy) * Mathf.Rad2Deg;
+            // The same random offset the arrow itself is drawn with. Its sign convention does not
+            // matter: the truth lies inside the error band either way.
+            Il2CppSafe.Do(() =>
+            {
+                if (hint._errorOffsetValid) bearing += hint._directionErrorOffsetDeg;
+            });
+            bearing = MapFrame.NormalizeBearing(bearing);
+
+            var range = Il2CppSafe.GetRef(() => hint.rangeText?.text) ?? "";
             var distance = string.IsNullOrWhiteSpace(range) ? "" : $", 距离（不准确）\"{range.Trim()}\"";
+
             EventLog.Append("impact_hint", "map",
-                $"弹着修正提示(黄箭头): 脱靶弹着 {at} → 附近目标在方位约 （不准确）{displayedBearing:F0}° 方向{distance}");
+                $"弹着修正提示(黄箭头): 脱靶弹着 {at} → 附近目标在方位约 （不准确）{bearing:F0}° 方向{distance}");
         }
+
+        SweepReportedCorrections(live);
+    }
+
+    /// <summary>
+    /// Drops reported-hint keys whose objects are gone. Done on a timer rather than every poll:
+    /// a hint that is merely deactivated for a moment must not come back as a fresh broadcast.
+    /// </summary>
+    private void SweepReportedCorrections(HashSet<int> live)
+    {
+        var now = Il2CppSafe.Get(() => Time.realtimeSinceStartup, 0f);
+        if (now < _nextHintSweep) return;
+        _nextHintSweep = now + HintSweepSeconds;
+
+        if (_reportedCorrections.Count == 0) return;
+
+        var stale = new List<int>();
+        foreach (var key in _reportedCorrections)
+        {
+            if (!live.Contains(key)) stale.Add(key);
+        }
+        foreach (var key in stale) _reportedCorrections.Remove(key);
     }
 }

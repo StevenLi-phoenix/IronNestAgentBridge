@@ -1,1013 +1,857 @@
-using Il2Cpp;
+﻿using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using IronNestAgentBridge.Agent;
 using IronNestAgentBridge.Fcs;
+using IronNestAgentBridge.Fire;
 using IronNestAgentBridge.GameState;
 using IronNestAgentBridge.Http;
+using IronNestAgentBridge.Snapshot;
 using IronNestAgentBridge.Ui;
 using MelonLoader;
+using UnityEngine;
 using UnityEngine.InputSystem;
 
+// MelonGame() without arguments on purpose: the mod is game-agnostic at load time and does its
+// own scene probing. Naming a game here would make it refuse to load after a store-page rename.
 [assembly: MelonInfo(typeof(IronNestAgentBridge.AgentBridgeMod), "IronNest Agent Bridge", "0.1.0", "stevenli")]
 [assembly: MelonGame()]
 
 namespace IronNestAgentBridge;
 
-public class AgentBridgeMod : MelonMod
+/// <summary>
+/// The mod's only MelonLoader entry point, and deliberately nothing more than one: lifecycle,
+/// scene binding, hotkeys, component assembly, and the frame loop that drives every poll.
+///
+/// All real work lives in the modules this class owns — the map / ammo / teleprinter readers, the
+/// FCS gateway, the fire pipeline, the shell ledger, the snapshot builder, the HTTP server and the
+/// agent. This class is where they meet the Unity frame and nowhere else.
+///
+/// Two invariants govern everything here:
+/// <list type="bullet">
+/// <item><b>Main-thread exclusivity.</b> Every Il2Cpp and Unity touch happens on the OnUpdate
+/// stack. Background threads reach the game only through <see cref="MainThread"/>, which is
+/// pumped once per frame ahead of this class's own work. Consequently every public operation
+/// method below is a main-thread-only contract.</item>
+/// <item><b>No exception may leave a Melon callback.</b> One uncaught throw and MelonLoader
+/// unloads the whole mod mid-mission, so each poll block carries its own guard: the five 0.5 s
+/// checks are guarded individually, because a single game singleton going missing must not take
+/// the world clock and the counter-battery relay down with it.</item>
+/// </list>
+/// </summary>
+public sealed class AgentBridgeMod : MelonMod
 {
-    private const float BindRetrySeconds = 2f;
-    private const float MapPollSeconds = 0.5f;
-    private const float TelegraphPollSeconds = 1.0f;
+    // ---------------------------------------------------------------- cross-thread state
+
+    /// <summary>
+    /// Mirrors <c>Application.isFocused</c>. The agent thread pauses on it, mirroring FCS's own
+    /// focus gate: while the game is in the background FCS suspends its automation too, so a
+    /// decision taken now would be both meaningless and paid for in tokens.
+    /// </summary>
+    public static volatile bool GameFocused = true;
+
+    /// <summary>
+    /// A cutscene is playing. The agent pauses and the panel hides — a cutscene can start
+    /// mid-mission and the world it shows is not the world the guns are in.
+    /// </summary>
+    public static volatile bool CinematicActive;
+
+    /// <summary>
+    /// Mission clock in seconds, the time base a motion model is anchored to. Written by the
+    /// world-clock poll, read by the fire pipeline on the agent's thread.
+    /// </summary>
+    public static volatile float MissionClockSeconds;
+
+    /// <summary>
+    /// True only while the in-game 24 h world clock is the source of
+    /// <see cref="MissionClockSeconds"/>. Missions that fall back to the mission stopwatch have
+    /// no shared absolute axis, so an "at HH:mm" observation cannot be anchored on them at all.
+    /// </summary>
+    public static volatile bool WorldClockAvailable;
+
+    // ---------------------------------------------------------------- components
 
     private readonly MapReader _map = new();
     private readonly ImpactReader _impacts = new();
-    private readonly TeleprinterReader _telegraph = new();
+    private readonly TeleprinterReader _teleprinters = new();
     private readonly FcsGateway _fcs = new();
-    private BridgeServer? _server;
+    private readonly ShellTracker _shells = new();
+    private readonly PollScheduler _ticks = new();
+
+    private readonly FireMissionPipeline _fire;
+    private readonly SnapshotBuilder _snapshots;
+
     private FdoAgent? _agent;
-    private readonly AgentWindow _window = new();
+    private BridgeServer? _http;
 
-    private float _nextBindAttempt;
-    private float _nextMapPoll;
-    private float _nextTelegraphPoll;
-    private float _nextFcsSummary;
+    public AgentBridgeMod()
+    {
+        _fire = new FireMissionPipeline(_map, _fcs, _shells);
+        _snapshots = new SnapshotBuilder(_map, _fcs, _shells, _teleprinters);
+    }
 
+    // ---------------------------------------------------------------- mission-scoped state
+
+    /// <summary>FCS summary text for the panel; opaque to everyone but the panel.</summary>
     public string LastFcsSummary { get; private set; } = "";
 
     /// <summary>
-    /// Cutscene heuristic: the baseline gameplay camera (captured at scene bind) has been
-    /// swapped out or disabled — cinematics always cut cameras. Panel hides and the agent
-    /// pauses while true.
+    /// A behaviour flag, not a property of the piece's position: true only once somebody has
+    /// actually placed the piece this mission — the agent's tool, or a hand the manual detector
+    /// caught. It can never be inferred from coordinates, because the un-placed piece sits on a
+    /// perfectly plausible-looking default.
     /// </summary>
-    public static volatile bool CinematicActive;
-    private UnityEngine.Camera? _baselineCamera;
-    private float _nextCinematicCheck;
+    public bool TurretCalibrated { get; private set; }
 
-    private void UpdateCinematicState()
-    {
-        var cam = UnityEngine.Camera.main;
-        if (_baselineCamera == null)
-        {
-            if (_map.IsBound && cam != null)
-                _baselineCamera = cam;
-            CinematicActive = false;
-            return;
-        }
+    /// <summary>Baseline game camera; a different one (or none) means a cutscene is running.</summary>
+    private Camera? _baselineCamera;
+    private int _baselineCameraId;
 
-        var active = cam == null || !ReferenceEquals(cam, _baselineCamera);
-        if (active != CinematicActive)
-        {
-            CinematicActive = active;
-            MelonLogger.Msg($"[AgentBridge] cinematic {(active ? "started" : "ended")} (main camera: {(cam == null ? "none" : cam.name)})");
-            EventLog.Append("cinematic", "game", active ? "cinematic started" : "cinematic ended");
-        }
-    }
-
-    /// <summary>Mirrors Application.isFocused for background threads; agent pauses while false.</summary>
-    public static volatile bool GameFocused = true;
-
-    private MissionManager.GamePhase? _lastPhase;
-
-    private bool _cbWasRunning;
-    private float _nextCbTick;
-
-    /// <summary>Game clock in seconds-of-day, mirrored for motion-model timestamps.</summary>
-    public static volatile float MissionClockSeconds;
-
-    private GenericTimerSceneSync? _worldClock;
+    private Il2Cpp.GenericTimerSceneSync? _worldClock;
 
     /// <summary>
-    /// Mirror the in-game 24h world clock (GenericTimerSceneSync, the bunker wall clock —
-    /// the same clock telegraph messages reference) into EventLog.GameClock as "HH:mm".
-    /// Falls back to the mission stopwatch when no world clock exists in the scene.
+    /// The candidate inventory is a one-shot diagnostic. Without this latch a scene whose only
+    /// timers read zero would re-enumerate and re-log twice a second forever.
     /// </summary>
-    private void UpdateGameClock()
-    {
-        try
-        {
-            if (_worldClock == null)
-            {
-                foreach (var sync in UnityEngine.Object.FindObjectsOfType<GenericTimerSceneSync>())
-                {
-                    if (_worldClock == null || sync.CurrentTime > _worldClock.CurrentTime)
-                        _worldClock = sync;
-                    MelonLogger.Msg($"[AgentBridge] world clock candidate '{sync.TimerID}' t={sync.CurrentTime:F0}s");
-                }
-            }
-            if (_worldClock != null)
-            {
-                var t = _worldClock.CurrentTime;
-                if (t > 0f)
-                {
-                    MissionClockSeconds = t;
-                    EventLog.GameClock = $"{(int)(t / 3600) % 24:00}:{(int)(t / 60) % 60:00}";
-                    return;
-                }
-            }
-        }
-        catch { _worldClock = null; }
+    private bool _worldClockInventoryLogged;
 
-        try
-        {
-            var tracker = MissionStatsTracker.Instance;
-            if (tracker == null || !tracker.timerRunning)
-                return;
-            var t = tracker.timerValue;
-            MissionClockSeconds = t;
-            EventLog.GameClock = $"{(int)(t / 60):00}:{(int)(t % 60):00}";
-        }
-        catch { }
-    }
+    private Il2Cpp.MissionManager.GamePhase? _previousPhase;
 
-    private sealed record InFlightShell(string Label, string Shell, float KmX, float KmY, float FiredAt,
-        string FiredAtGame = "", int Serial = 0, float FlightEtaSeconds = 60f);
-    private readonly List<InFlightShell> _inFlight = new();
-    private const float InFlightTimeoutSeconds = 150f;
-    private const float ImpactMatchKm = 3f;
+    private bool _counterBatteryRunning;
+
+    /// <summary>De-duplication key for the FCS card receipt, which is a latched value.</summary>
+    private string? _lastCardResult;
+
+    private Vector3? _lastPieceLocal;
+    private (float x, float y)? _lastReportedTurretKm;
+    private bool _manualMovePending;
+    private float _manualMoveSettleAt;
+
+    // ---------------------------------------------------------------- constants
+
+    /// <summary>Map-local movement above which the piece counts as having been dragged.</summary>
+    private const float ManualMoveEpsilonLocal = 0.02f;
+
+    /// <summary>How long the piece must sit still before a drag is reported as finished.</summary>
+    private const float ManualSettleSeconds = 2f;
+
+    /// <summary>Re-reports below this are noise from a hand resting on the piece. Kilometres.</summary>
+    private const float ManualReportMinDeltaKm = 0.2f;
 
     /// <summary>
-    /// An actual impact landed: resolve the nearest in-flight shell within range and hand its
-    /// identity back so the shell_impact event names the task (#N) that just landed.
+    /// The km-frame origin. It is also the value the snapshot shows for an un-placed piece, which
+    /// is precisely why declaring it as a turret position has to be refused.
     /// </summary>
-    private string? OnShellImpact(float kmX, float kmY)
-    {
-        InFlightShell? best = null;
-        var bestDist = ImpactMatchKm;
-        foreach (var s in _inFlight)
-        {
-            var d = MathF.Sqrt((s.KmX - kmX) * (s.KmX - kmX) + (s.KmY - kmY) * (s.KmY - kmY));
-            if (d < bestDist) { bestDist = d; best = s; }
-        }
-        if (best == null)
-            return null;
-        _inFlight.Remove(best);
-        return $"#{best.Serial} {best.Label} ({best.Shell})";
-    }
+    private const float OriginSentinelToleranceKm = 0.15f;
 
-    /// <summary>
-    /// The per-gun impact marker cannot signal a repeat impact on the SAME spot (it simply
-    /// does not move), so an in-flight shell that outlives its expected flight time is
-    /// presumed landed and settled WITH an event — never a silent expiry the agent
-    /// misreads as "still flying".
-    /// </summary>
-    private void ResolveOverdueShells()
-    {
-        if (_inFlight.Count == 0)
-            return;
-        var now = UnityEngine.Time.realtimeSinceStartup;
-        foreach (var s in _inFlight.Where(s => now - s.FiredAt > Math.Min(s.FlightEtaSeconds, InFlightTimeoutSeconds)).ToList())
-        {
-            _inFlight.Remove(s);
-            EventLog.Append("shell_impact", "map",
-                $"弹着推定: #{s.Serial} {s.Label} ({s.Shell}) 已超预计飞行时间, 判定已落地并销账 — 弹着标记未移动通常=与前一发落点几乎重合; 可重新评估该目标");
-        }
-    }
-
-    public List<string> DescribeInFlight()
-    {
-        var now = UnityEngine.Time.realtimeSinceStartup;
-        return _inFlight.Select(s =>
-            $"#{s.Serial} {s.Label} ({s.Shell}, 出膛@{(s.FiredAtGame.Length > 0 ? s.FiredAtGame : "?")}, 已飞{now - s.FiredAt:F0}s/预计{s.FlightEtaSeconds:F0}s)").ToList();
-    }
-
-    /// <summary>
-    /// Counter-battery countdown relay: the bunker timer the player can see/hear, pushed to
-    /// the agent as counter_battery events — on start, every 20 s while running, on expiry
-    /// and on permanent stop. Zero means enemy fire lands on this position.
-    /// </summary>
-    private void PollCounterBattery(float now)
-    {
-        CounterBatteryTimer? timer = null;
-        try { timer = CounterBatteryTimer.Instance; } catch { }
-        if (timer == null)
-        {
-            _cbWasRunning = false;
-            return;
-        }
-
-        bool running, expired, stopped;
-        float remaining;
-        try
-        {
-            running = timer.IsRunning;
-            expired = timer.IsExpired;
-            stopped = timer.IsPermanentlyStopped;
-            remaining = timer.TimeRemaining;
-        }
-        catch { return; }
-
-        static string Fmt(float s) => $"{(int)(s / 60):00}:{(int)(s % 60):00}";
-
-        if (stopped)
-        {
-            if (_cbWasRunning)
-                EventLog.Append("counter_battery", "game", "反炮击倒计时已永久解除 — 威胁排除");
-            _cbWasRunning = false;
-            return;
-        }
-        if (expired)
-        {
-            if (_cbWasRunning)
-                EventLog.Append("counter_battery", "game", "反炮击倒计时归零 — 敌炮火正在覆盖本阵地");
-            _cbWasRunning = false;
-            return;
-        }
-        if (!running)
-        {
-            _cbWasRunning = false;
-            return;
-        }
-
-        if (!_cbWasRunning)
-        {
-            _cbWasRunning = true;
-            _nextCbTick = now + 20f;
-            EventLog.Append("counter_battery", "game",
-                $"反炮击倒计时启动: 剩余 {Fmt(remaining)} — 归零时敌炮火覆盖本阵地");
-        }
-        else if (now >= _nextCbTick)
-        {
-            _nextCbTick = now + 20f;
-            EventLog.Append("counter_battery", "game", $"反炮击倒计时: 剩余 {Fmt(remaining)}");
-        }
-    }
-
-    /// <summary>
-    /// Mission lifecycle automation off MissionManager.CurrentPhase:
-    /// leaving MissionActive (summary screen / back to map / menu) auto-stops the agent so it
-    /// doesn't burn tokens against a dead battlefield; entering MissionActive wipes the previous
-    /// mission's conversation and event log — stale intel from the last map is worse than none.
-    /// The agent never auto-starts: F11 remains the per-session opt-in.
-    /// </summary>
-    private void UpdateMissionPhase()
-    {
-        MissionManager.GamePhase phase;
-        try
-        {
-            var mm = MissionManager.Instance;
-            if (mm == null) return;
-            phase = mm.CurrentPhase;
-        }
-        catch { return; }
-
-        if (_lastPhase == phase)
-            return;
-        var prev = _lastPhase;
-        _lastPhase = phase;
-        if (prev == null)
-            return; // first sample after boot — no transition to act on
-
-        if (prev == MissionManager.GamePhase.MissionActive)
-        {
-            MelonLogger.Msg($"[AgentBridge] mission ended ({prev}->{phase}) — agent auto-stop");
-            Agent.TransactionLog.Write("mission", $"mission ended ({prev}->{phase}); agent auto-stopped");
-            if (AgentConfig.LlmControl)
-                AgentConfig.LlmControl = false;
-            if (_agent?.IsRunning == true)
-                _agent.Stop();
-        }
-
-        if (phase == MissionManager.GamePhase.MissionActive)
-            FullReset("new mission — clearing previous conversation");
-    }
+    // =======================================================================================
+    // MelonMod lifecycle
+    // =======================================================================================
 
     public override void OnInitializeMelon()
     {
+        // First, unconditionally: everything below reads configuration.
         AgentConfig.Initialize();
+
+        // Lazy by contract — FCS may not have loaded yet, and resolving now would cache a null
+        // for the rest of the process.
         RequisitionOperator.RequisitionLockProvider = () => _fcs.GetRequisitionLock();
+
+        // Constructed, never started. Fire control is granted by hand, once per mission, with F11.
         _agent = new FdoAgent(this);
-        if (AgentConfig.EnableHttpApi)
-        {
-            _server = new BridgeServer(this);
-            try
-            {
-                _server.Start();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[AgentBridge] failed to start HTTP server on port {BridgeServer.Port}: {ex.Message}");
-            }
-        }
-        else
+
+        if (!AgentConfig.EnableHttpApi)
         {
             MelonLogger.Msg("[AgentBridge] HTTP API disabled (EnableHttpApi=false)");
+            return;
+        }
+
+        try
+        {
+            _http = new BridgeServer(this);
+            _http.Start();
+        }
+        catch (Exception ex)
+        {
+            // A taken port must cost the debug API, not the mod.
+            _http = null;
+            MelonLogger.Error($"[AgentBridge] failed to start HTTP server on port {BridgeServer.Port}: {ex.Message}");
         }
     }
 
     public override void OnDeinitializeMelon()
     {
-        _agent?.Stop();
-        _server?.Stop();
-    }
-
-    public override void OnGUI()
-    {
-        // Mirror FCS's implicit behavior (no HUD until the scene binds) plus an explicit
-        // camera-swap cinematic gate that also covers mid-mission cutscenes.
-        if (_agent != null && _map.IsBound && !CinematicActive)
-            _window.Draw(_agent, this);
+        try { _agent?.Stop(); } catch { }
+        try { _http?.Stop(); } catch { }
     }
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
+        // Every scene reference we hold is now dangling. Rebinding is cheap; acting on a stale
+        // transform is not.
         _map.Unbind();
         Agent.GridMath.ResetMapBounds();
-        _telegraph.Reset();
-        _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + BindRetrySeconds;
+        _teleprinters.Reset();
+
+        _baselineCamera = null;
+        _baselineCameraId = 0;
+        _worldClock = null;
+        _worldClockInventoryLogged = false;
+
+        // Queued work was written against the scene that just went away.
+        MainThread.Clear();
+
+        _ticks.Bind.ScheduleIn(Il2CppSafe.Get(() => Time.realtimeSinceStartup, 0f), MapReader.BindRetrySeconds);
+    }
+
+    public override void OnGUI()
+    {
+        // Mirrors FCS: no HUD until the tactical map is bound, plus a cutscene gate of our own.
+        if (_agent == null || !_map.IsBound || CinematicActive) return;
+
+        AgentWindow.Draw(_agent, this);
     }
 
     public override void OnUpdate()
     {
-        GameFocused = UnityEngine.Application.isFocused;
+        // Fixed opening, in this order: the focus mirror the agent reads, then the pump that lets
+        // every background caller reach the game before this frame's own work runs.
+        GameFocused = Il2CppSafe.Get(() => Application.isFocused, true);
         MainThread.Pump();
 
-        var now = UnityEngine.Time.realtimeSinceStartup;
+        // Sampled exactly once and shared by every beat; see PollScheduler.
+        var now = Il2CppSafe.Get(() => Time.realtimeSinceStartup, 0f);
 
-        if (!_map.IsBound && now >= _nextBindAttempt)
-        {
-            _nextBindAttempt = now + BindRetrySeconds;
-            if (_map.TryBind())
-            {
-                // Per-mission firing envelope: the real map sheet size, not the A..Z guess.
-                if (_map.KmBounds is { } kb)
-                {
-                    Agent.GridMath.SetMapBoundsKm(kb.MinX, kb.MinY, kb.MaxX, kb.MaxY);
-                    MelonLogger.Msg($"[AgentBridge] tactical map bound; sheet extent km({kb.MinX:F1},{kb.MinY:F1})-({kb.MaxX:F1},{kb.MaxY:F1})");
-                }
-                else
-                {
-                    Agent.GridMath.ResetMapBounds();
-                    MelonLogger.Msg("[AgentBridge] tactical map bound; sheet unmeasured — generous bounds fallback");
-                }
-            }
-        }
+        if (!_map.IsBound && _ticks.Bind.Due(now)) TryBindMap();
 
-        if (_map.IsBound && now >= _nextMapPoll)
-        {
-            _nextMapPoll = now + MapPollSeconds;
-            try { _map.PollAndEmitEvents(); }
-            catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] map poll failed: {ex.Message}"); }
-            try { _impacts.PollAndEmitEvents(_map.MapSurface, OnShellImpact); }
-            catch { }
-            ResolveOverdueShells();
-            PollFriendlyIntrusions(now);
-        }
+        if (_map.IsBound && _ticks.Map.Due(now)) MapTick(now);
+        if (_ticks.Telegraph.Due(now)) TelegraphTick();
 
-        if (now >= _nextTelegraphPoll)
-        {
-            _nextTelegraphPoll = now + TelegraphPollSeconds;
-            try { _telegraph.PollAndEmitEvents(); }
-            catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] telegraph poll failed: {ex.Message}"); }
-        }
+        PollHotkeys();
 
+        if (_ticks.Misc.Due(now)) MiscTick(now);
+        if (_ticks.Fcs.Due(now)) FcsTick();
+    }
+
+    // =======================================================================================
+    // Poll beats
+    // =======================================================================================
+
+    private void TryBindMap()
+    {
         try
         {
-            var kb = Keyboard.current;
-            if (kb != null)
-            {
-                if (kb.f10Key.wasPressedThisFrame)
-                    _window.Visible = !_window.Visible;
-                if (kb.f11Key.wasPressedThisFrame)
-                    ToggleLlmControl();
-                // F9 is FCS's plan reset; ride the same semantic — full agent reset.
-                if (kb.f9Key.wasPressedThisFrame)
-                    FullReset("F9");
-            }
+            if (!_map.TryBind()) return;
         }
+        catch (Exception ex)
+        {
+            MelonLogger.Warning($"[AgentBridge] map bind failed: {ex.Message}");
+            return;
+        }
+
+        // The firing envelope for this mission. Without a measured sheet the generous fallback
+        // stands, which lets a wild aim point through rather than refusing a legitimate one.
+        if (_map.KmBounds is { } bounds)
+        {
+            Agent.GridMath.SetMapBoundsKm(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
+            MelonLogger.Msg(
+                $"[AgentBridge] tactical map bound; sheet extent km({bounds.MinX:F1},{bounds.MinY:F1})-({bounds.MaxX:F1},{bounds.MaxY:F1})");
+        }
+        else
+        {
+            Agent.GridMath.ResetMapBounds();
+            MelonLogger.Msg("[AgentBridge] tactical map bound; sheet unmeasured — generous bounds fallback");
+        }
+    }
+
+    private void MapTick(float now)
+    {
+        try { _map.PollAndEmitEvents(); }
+        catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] map poll failed: {ex.Message}"); }
+
+        // Silent by design: impact markers churn during scene transitions and a warning per
+        // half-second would bury everything else in the log.
+        try { _impacts.PollAndEmitEvents(_map.MapSurface, _shells.OnShellImpact); }
         catch { }
 
-        if (now >= _nextCinematicCheck)
-        {
-            _nextCinematicCheck = now + 0.5f;
-            try { UpdateCinematicState(); }
-            catch { }
-            try { DetectManualCalibration(); }
-            catch { }
-            try { UpdateMissionPhase(); }
-            catch { }
-            try { PollCounterBattery(now); }
-            catch { }
-            try { UpdateGameClock(); }
-            catch { }
-        }
+        try { _shells.ResolveOverdueShells(); }
+        catch { }
 
-        if (now >= _nextFcsSummary)
-        {
-            _nextFcsSummary = now + 2f;
-            try
-            {
-                var s = _fcs.ReadStatus();
-                LastFcsSummary = $"FCS: pending={s.PendingCount} done={s.CompletedTaskCount} fail={s.FailedTaskCount}" +
-                                 (s.LeftTask != null ? $"\nT1(左): {s.LeftTask}" : "") +
-                                 (s.RightTask != null ? $"\nT2(右): {s.RightTask}" : "");
-                TrackFiredShells(s);
-
-                var cardResult = _fcs.ReadConsoleCardResult();
-                if (!string.IsNullOrEmpty(cardResult) && cardResult != _lastCardResult)
-                {
-                    _lastCardResult = cardResult!;
-                    EventLog.Append("requisition", "fcs", $"card request completed: {cardResult}{BalanceSuffix()}");
-                    Agent.TransactionLog.Write("requisition", cardResult!);
-                }
-            }
-            catch { }
-        }
+        try { _shells.PollFriendlyIntrusions(now, _map); }
+        catch { }
     }
 
-    // The balance moves on every purchase (shells bought by FCS, cards by the coordinator) —
-    // stamp it onto purchase-adjacent events so the agent always decides on fresh funds.
-    private static string BalanceSuffix()
-        => AmmoReader.ReadRequisitionPoints() is { } p ? $" · 征用点余额 {p}" : "";
-
-    // task serial (#N) -> the mission it covers (label + shell + aim point). No physical
-    // marker involved: map tokens belong to the player (T1-T8) and FCS's gun indicators (T9/T10).
-    private readonly Dictionary<int, InFlightShell> _deployedTasks = new();
-    private static readonly System.Text.RegularExpressions.Regex TaskSerialRe =
-        new(@"^#(\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-    /// <summary>A bookkept task that vanished from the live FCS set has fired (or was cleared) — move it to in-flight.</summary>
-    private void TrackFiredShells(FcsStatusDto status)
+    private void TelegraphTick()
     {
-        if (_deployedTasks.Count == 0)
-            return;
-
-        // Live serial set comes structured from the gateway; display strings are never parsed.
-        var live = status.SerialToMarker;
-
-        foreach (var serial in _deployedTasks.Keys.Where(s => !live.ContainsKey(s)).ToList())
-        {
-            var dep = _deployedTasks[serial];
-            _deployedTasks.Remove(serial);
-
-            // A serial that left the live set FAILED (dispenser broken, ballistic reject…)
-            // just as often as it fired — check the FCS recent-outcome list before booking
-            // an in-flight shell, or the agent waits on a shell that never left the barrel.
-            if (status.RecentOutcomes.TryGetValue(serial, out var outcome)
-                && outcome.StartsWith("Failed", StringComparison.Ordinal))
-            {
-                var why = outcome.Length > 8 ? outcome[8..] : "unknown";
-                EventLog.Append("fcs_task_update", "fcs",
-                    $"⚠任务失败(未发射): #{dep.Serial} {dep.Label} ({dep.Shell}) — {why}。" +
-                    "目标未被服务; 按失败原因处置(装药/射程问题就改打近目标或换弹, 而不是原样重排)");
-                continue;
-            }
-
-            // The task left pending and both gun slots with no failure record: the shell is
-            // in the air. Track it so the agent doesn't re-queue a target whose shell is
-            // still flying.
-            _inFlight.Add(dep with { FiredAt = UnityEngine.Time.realtimeSinceStartup, FiredAtGame = EventLog.GameClock });
-            EventLog.Append("shell_fired", "fcs",
-                $"炮弹出膛: #{dep.Serial} {dep.Label} ({dep.Shell}) 已在飞行途中, 等待弹着 — 勿重复排队该目标{BalanceSuffix()}");
-        }
-    }
-
-    // The queue-time friendly-fire intercept only sees the situation AT queue time; the
-    // front line moves. Watch every pending task's blast zone for friendlies that arrived
-    // afterwards and warn the agent once per intrusion (cleared when the zone is clean or
-    // the task leaves), so it can adjust_fire away or cancel before the shot.
-    private readonly HashSet<int> _ffWarned = new();
-    private float _nextFfSweep;
-
-    private void PollFriendlyIntrusions(float now)
-    {
-        if (now < _nextFfSweep || _deployedTasks.Count == 0 || !_map.IsBound)
-            return;
-        _nextFfSweep = now + 5f;
-
-        List<MapEntityDto> entities;
-        List<ShellSpecDto> specs;
-        try
-        {
-            entities = _map.ReadEntities();
-            specs = AmmoReader.ReadShellSpecs();
-        }
-        catch { return; }
-
-        foreach (var (serial, task) in _deployedTasks.ToList())
-        {
-            if (IsHarmlessShell(task.Shell))
-                continue;
-            var blastKm = specs.FirstOrDefault(x => string.Equals(x.Id, task.Shell, StringComparison.OrdinalIgnoreCase))?.ImpactRadius ?? 0f;
-            if (blastKm <= 0.001f)
-                continue;
-
-            var inside = new List<string>();
-            foreach (var e in entities)
-            {
-                if (!e.IsAlive) continue;
-                var friendly = e.Role.Contains("Ally") || e.Role == "Spotter"
-                               || e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
-                               || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase);
-                if (!friendly) continue;
-                var dx = 10.016f + e.MapX * 3.8164f - task.KmX;
-                var dy = 5.235f + e.MapY * 3.8164f - task.KmY;
-                if (MathF.Sqrt(dx * dx + dy * dy) <= blastKm)
-                    inside.Add(e.Id);
-            }
-
-            if (inside.Count > 0)
-            {
-                if (_ffWarned.Add(serial))
-                    EventLog.Append("friendly_warning", "map",
-                        $"⚠误伤预警: 已排任务 #{serial} {task.Label} 的弹着区({task.Shell}半径{blastKm * 1000f:F0}m)内" +
-                        $"现有友军 {string.Join(", ", inside)} — 立即adjust_fire挪开弹着点或cancel_pending_task");
-            }
-            else
-            {
-                _ffWarned.Remove(serial);
-            }
-        }
-        _ffWarned.RemoveWhere(s => !_deployedTasks.ContainsKey(s));
-    }
-
-    /// <summary>Append the covered target's label to FCS task strings so the agent can correlate.</summary>
-    private string? AnnotateTask(string? desc)
-    {
-        if (desc == null) return null;
-        var m = TaskSerialRe.Match(desc);
-        if (m.Success && int.TryParse(m.Groups[1].Value, out var serial)
-            && _deployedTasks.TryGetValue(serial, out var dep))
-            return $"{desc} → {dep.Label}";
-        return desc;
-    }
-
-    public void ToggleLlmControl()
-    {
-        AgentConfig.LlmControl = !AgentConfig.LlmControl;
-        if (_agent == null) return;
-        if (AgentConfig.LlmControl && !_agent.IsRunning) _agent.Start();
-        else if (!AgentConfig.LlmControl && _agent.IsRunning) _agent.Stop();
-        MelonLogger.Msg($"[AgentBridge] LLM control {(AgentConfig.LlmControl ? "ON" : "OFF")}");
+        // Deliberately not gated on a bound map: dispatches arrive whether or not we found the
+        // command table.
+        try { _teleprinters.PollAndEmitEvents(); }
+        catch (Exception ex) { MelonLogger.Warning($"[AgentBridge] telegraph poll failed: {ex.Message}"); }
     }
 
     /// <summary>
-    /// F9-style full reset: stop the agent, drop staged missions and conversation state,
-    /// rebind the scene. The agent restarts only if LLM control is enabled.
+    /// The five half-second checks. Each is guarded on its own: they read unrelated game
+    /// singletons and any of them may be absent in a given scene.
     /// </summary>
-    public void FullReset(string reason)
+    private void MiscTick(float now)
     {
-        MelonLogger.Msg($"[AgentBridge] full reset ({reason})");
-        Agent.TransactionLog.Write("reset", $"full reset: {reason}");
-        _agent?.Stop();
-        _agent?.ClearLog();
-        EventLog.Clear(); // stale events must not replay into the restarted agent's fresh context
-        _lastCardResult = "";
-        _deployedTasks.Clear();
-        _inFlight.Clear();
-        _map.Unbind();
-        Agent.GridMath.ResetMapBounds();
-        _impacts.Reset();
-        _telegraph.Reset();
-        _baselineCamera = null;
-        _worldClock = null;
-        _cbWasRunning = false;
-        TurretCalibrated = false;
-        _lastPieceLocal = null;
-        _nextBindAttempt = UnityEngine.Time.realtimeSinceStartup + 1f;
+        try { UpdateCinematic(); } catch { }
+        try { DetectManualCalibration(now); } catch { }
+        try { UpdateMissionPhase(); } catch { }
+        try { UpdateCounterBattery(now); } catch { }
+        try { UpdateWorldClock(); } catch { }
     }
 
-    // ---- called from BridgeServer via MainThread.Run ----
-
-    public StateSnapshotDto BuildSnapshot()
+    private void FcsTick()
     {
-        var snapshot = new StateSnapshotDto
-        {
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            GameTime = EventLog.GameClock,
-            SceneBound = _map.IsBound,
-            Teleprinters = _telegraph.ReadAll(),
-            Guns = GunStateReader.ReadBoth(),
-            Fcs = _fcs.ReadStatus(),
-            Cards = AmmoReader.ReadCards(),
-        };
-        snapshot.AvailableShells = snapshot.Cards.Select(c => c.Id).ToList();
-        snapshot.RequisitionPoints = AmmoReader.ReadRequisitionPoints();
-        try { snapshot.SceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch { }
         try
         {
-            var mission = Il2Cpp.MissionManager.Instance?.CurrentMission;
-            snapshot.MissionName = mission?.MissionName?.Get() ?? "";
-            snapshot.MissionType = mission?.MissionType.ToString() ?? "";
+            var status = _fcs.ReadStatus();
+            LastFcsSummary = FormatFcsSummary(status);
+
+            _shells.TrackFiredShells(status);
+
+            // The receipt is a latched field, so it reads the same on every poll until the next
+            // purchase overwrites it; only a change is news.
+            var cardResult = _fcs.ReadConsoleCardResult();
+            if (!string.IsNullOrEmpty(cardResult) && cardResult != _lastCardResult)
+            {
+                _lastCardResult = cardResult;
+                EventLog.Append("requisition", "fcs",
+                    $"card request completed: {cardResult}{ShellTracker.BalanceSuffix()}");
+                TransactionLog.Write("requisition", cardResult!);
+            }
         }
         catch { }
-        var cardIds = new HashSet<string>(snapshot.AvailableShells, StringComparer.OrdinalIgnoreCase);
-        snapshot.ShellSpecs = AmmoReader.ReadShellSpecs().Where(s => cardIds.Contains(s.Id)).ToList();
-        snapshot.Fcs.LeftTask = AnnotateTask(snapshot.Fcs.LeftTask);
-        snapshot.Fcs.RightTask = AnnotateTask(snapshot.Fcs.RightTask);
-        snapshot.Fcs.PendingTasks = snapshot.Fcs.PendingTasks.Select(t => AnnotateTask(t)!).ToList();
-        snapshot.InFlightShells = DescribeInFlight();
-        if (_map.IsBound)
-        {
-            snapshot.MapExtentKm = Agent.GridMath.MapBoundsText;
-            var turretLocal = _map.TurretLocalOnMap();
-            snapshot.TurretMapX = turretLocal.x;
-            snapshot.TurretMapY = turretLocal.y;
-            snapshot.TurretCalibrated = TurretCalibrated;
-            snapshot.Entities = _map.ReadEntities();
-            snapshot.Markers = _map.ReadMarkers();
-        }
-        return snapshot;
     }
 
-    /// <summary>Card purchase: DTO into FCS's coordinator when available, legacy physical path otherwise.</summary>
-    public string RequestCard(string cardId, float? bearingDeg, int priority = 50, string? startGrid = null,
-        float? distanceKm = null)
+    private void PollHotkeys()
     {
-        // Budget gate for special cards only — fire missions are ungated (levels exist with
-        // 0 balance but shells already loaded in the guns; firing those buys nothing).
-        if (AmmoReader.ReadRequisitionPoints() is { } balance
-            && AmmoReader.ReadCards().FirstOrDefault(
-                c => string.Equals(c.Id, cardId, StringComparison.OrdinalIgnoreCase)) is { Cost: > 0 } cardInfo
-            && cardInfo.Cost > balance)
-            return $"征用点不足: {cardId} 需{cardInfo.Cost}点, 余额仅{balance}点 — rejected";
-
-        var viaFcs = _fcs.RequestCardPurchase(cardId, bearingDeg, priority, startGrid, distanceKm);
-        if (viaFcs != null)
+        try
         {
-            EventLog.Append("requisition", "fcs", $"card '{cardId}' {viaFcs}");
-            return viaFcs + " (result arrives via events)";
+            var keyboard = Keyboard.current;
+            if (keyboard == null) return;
+
+            if (keyboard.f10Key.wasPressedThisFrame) AgentWindow.Visible = !AgentWindow.Visible;
+            if (keyboard.f11Key.wasPressedThisFrame) ToggleLlmControl();
+
+            // Same key and same meaning as the FCS plan reset: one gesture wipes both sides.
+            if (keyboard.f9Key.wasPressedThisFrame) FullReset("F9");
         }
-        return GameState.RequisitionOperator.StartPurchase(cardId, bearingDeg, null);
+        catch { }
     }
 
-    private string _lastCardResult = "";
-
-    public string CancelPendingFcsTask(int serial)
+    /// <summary>Panel text. T9 and T10 are the fixed gun-position labels, left and right.</summary>
+    private static string FormatFcsSummary(FcsStatusDto status)
     {
-        var result = _fcs.CancelPending(serial);
-        EventLog.Append("fcs_task_update", "fcs", $"cancel #{serial}: {result}");
-        return result;
+        var text = $"FCS: pending={status.PendingCount} done={status.CompletedTaskCount} fail={status.FailedTaskCount}";
+        if (status.LeftTask != null) text += $"\nT9(左): {status.LeftTask}";
+        if (status.RightTask != null) text += $"\nT10(右): {status.RightTask}";
+        return text;
     }
 
-    // Calibration is an act, not a position property: true once someone (agent tool or a
-    // manual drag we detect) has deliberately placed the piece this mission.
-    public bool TurretCalibrated { get; private set; }
-    private UnityEngine.Vector3? _lastPieceLocal;
+    // =======================================================================================
+    // Cinematic detection
+    // =======================================================================================
 
-    private void DetectManualCalibration()
+    /// <summary>
+    /// A cutscene always switches cameras, so the test is identity of <c>Camera.main</c> against
+    /// the baseline captured at bind time. Instance ids are compared rather than the wrappers:
+    /// Unity's <c>==</c> reports a destroyed object as null, which would read as "cutscene" for
+    /// every torn-down camera.
+    /// </summary>
+    private void UpdateCinematic()
+    {
+        Camera? cam;
+        try { cam = Camera.main; }
+        catch { cam = null; }
+
+        if (_baselineCamera == null)
+        {
+            // Only capture from a bound scene: the menu camera is not the mission's baseline.
+            if (_map.IsBound && cam != null)
+            {
+                _baselineCamera = cam;
+                _baselineCameraId = Il2CppSafe.Get(() => cam!.GetInstanceID(), 0);
+            }
+
+            // Without a baseline there is nothing to compare against, so nothing may be claimed.
+            SetCinematic(false, cam);
+            return;
+        }
+
+        var active = cam == null || Il2CppSafe.Get(() => cam!.GetInstanceID(), 0) != _baselineCameraId;
+        SetCinematic(active, cam);
+    }
+
+    private void SetCinematic(bool active, Camera? cam)
+    {
+        if (active == CinematicActive) return;
+
+        CinematicActive = active;
+
+        var name = cam == null ? "none" : Il2CppSafe.Get(() => cam!.name, "none");
+        MelonLogger.Msg($"[AgentBridge] cinematic {(active ? "started" : "ended")} (main camera: {name})");
+        EventLog.Append("cinematic", "game", active ? "cinematic started" : "cinematic ended");
+    }
+
+    // =======================================================================================
+    // World clock
+    // =======================================================================================
+
+    /// <summary>
+    /// Mirrors the in-game 24 h world clock, and only falls back to the mission stopwatch when
+    /// there is none. The distinction matters beyond formatting: the world clock is the shared
+    /// axis that dispatch timestamps, events and motion observations are all quoted against,
+    /// while the stopwatch is local to the run and cannot anchor an absolute observation.
+    /// </summary>
+    private void UpdateWorldClock()
+    {
+        try
+        {
+            _worldClock ??= FindWorldClock(ref _worldClockInventoryLogged);
+
+            if (_worldClock != null)
+            {
+                var seconds = _worldClock.CurrentTime;
+                if (seconds > 0f)
+                {
+                    MissionClockSeconds = seconds;
+                    WorldClockAvailable = true;
+                    EventLog.GameClock = $"{(int)(seconds / 3600f) % 24:00}:{(int)(seconds / 60f) % 60:00}";
+                    return;
+                }
+
+                // A clock that stopped reading is not this scene's clock; search again next tick.
+                _worldClock = null;
+            }
+        }
+        catch
+        {
+            _worldClock = null;
+        }
+
+        FallBackToStopwatch();
+    }
+
+    /// <summary>
+    /// The scene may hold several timers (a pocket watch, a wall clock). The one furthest along
+    /// is the world clock; the others are props or countdowns that started later.
+    /// </summary>
+    private static Il2Cpp.GenericTimerSceneSync? FindWorldClock(ref bool inventoryLogged)
+    {
+        Il2CppArrayBase<Il2Cpp.GenericTimerSceneSync>? timers;
+        try { timers = UnityEngine.Object.FindObjectsOfType<Il2Cpp.GenericTimerSceneSync>(); }
+        catch { return null; }
+
+        if (timers == null) return null;
+
+        Il2CppArrayBase<Il2Cpp.GenericTimerSceneSync> found = timers;
+        var log = !inventoryLogged;
+
+        Il2Cpp.GenericTimerSceneSync? best = null;
+        var bestTime = float.MinValue;
+
+        var count = Il2CppSafe.Get(() => found.Length, 0);
+        for (var i = 0; i < count; i++)
+        {
+            var index = i;
+            var timer = Il2CppSafe.GetRef(() => found[index]);
+            if (timer == null) continue;
+
+            var seconds = Il2CppSafe.Get(() => timer!.CurrentTime, 0f);
+
+            if (log)
+            {
+                // Boxed: the timer id's declared type differs between game builds, and the log
+                // line only ever needs its text.
+                var id = Il2CppSafe.Get<object?>(() => timer!.TimerID, null)?.ToString() ?? "?";
+                MelonLogger.Msg($"[AgentBridge] world clock candidate '{id}' t={seconds:F0}s");
+                inventoryLogged = true;
+            }
+
+            if (seconds <= bestTime) continue;
+            bestTime = seconds;
+            best = timer;
+        }
+
+        return best;
+    }
+
+    /// <summary>Mission stopwatch, "mm:ss". No absolute axis, hence no world-clock claim.</summary>
+    private static void FallBackToStopwatch()
+    {
+        WorldClockAvailable = false;
+
+        try
+        {
+            var stats = Il2Cpp.MissionStatsTracker.Instance;
+            if (stats == null || !stats.timerRunning) return;
+
+            var seconds = stats.timerValue;
+            MissionClockSeconds = seconds;
+            EventLog.GameClock = $"{(int)(seconds / 60f):00}:{(int)(seconds % 60f):00}";
+        }
+        catch { }
+    }
+
+    // =======================================================================================
+    // Mission phase
+    // =======================================================================================
+
+    /// <summary>
+    /// Ties the agent's session to the mission's. Leaving the active phase stops it; entering one
+    /// wipes the previous conversation. It never starts the agent: fire control is opt-in, once
+    /// per mission, and an automatic start would put an LLM on the guns without anyone asking.
+    /// </summary>
+    private void UpdateMissionPhase()
+    {
+        Il2Cpp.MissionManager.GamePhase phase;
+        try
+        {
+            var manager = Il2Cpp.MissionManager.Instance;
+            if (manager == null) return;
+            phase = manager.CurrentPhase;
+        }
+        catch
+        {
+            return;
+        }
+
+        var previous = _previousPhase;
+        _previousPhase = phase;
+
+        // The very first sample is a reading, not a transition: treating it as one would fire a
+        // reset the instant the mod loads.
+        if (previous == null || previous.Value == phase) return;
+
+        var active = Il2Cpp.MissionManager.GamePhase.MissionActive;
+
+        if (previous.Value == active)
+        {
+            MelonLogger.Msg($"[AgentBridge] mission ended ({previous.Value}->{phase}) — agent auto-stop");
+            TransactionLog.Write("mission", $"mission ended ({previous.Value}->{phase}); agent auto-stopped");
+
+            if (AgentConfig.LlmControl) AgentConfig.LlmControl = false;
+            if (_agent is { IsRunning: true }) _agent.Stop();
+            return;
+        }
+
+        if (phase == active) FullReset("new mission — clearing previous conversation");
+    }
+
+    // =======================================================================================
+    // Counter-battery relay
+    // =======================================================================================
+
+    private void UpdateCounterBattery(float now)
+    {
+        Il2Cpp.CounterBatteryTimer? timer;
+        try { timer = Il2Cpp.CounterBatteryTimer.Instance; }
+        catch { _counterBatteryRunning = false; return; }
+
+        if (timer == null)
+        {
+            _counterBatteryRunning = false;
+            return;
+        }
+
+        bool running, expired, permanentlyStopped;
+        float remaining;
+        try
+        {
+            running = timer.IsRunning;
+            expired = timer.IsExpired;
+            permanentlyStopped = timer.IsPermanentlyStopped;
+            remaining = timer.TimeRemaining;
+        }
+        catch
+        {
+            // A partial read is worse than none: keep the state and try again in half a second.
+            return;
+        }
+
+        if (permanentlyStopped)
+        {
+            if (_counterBatteryRunning)
+            {
+                _counterBatteryRunning = false;
+                EventLog.Append("counter_battery", "game", "反炮击倒计时已永久解除 — 威胁排除");
+            }
+            return;
+        }
+
+        if (expired)
+        {
+            if (_counterBatteryRunning)
+            {
+                _counterBatteryRunning = false;
+                EventLog.Append("counter_battery", "game", "反炮击倒计时归零 — 敌炮火正在覆盖本阵地");
+            }
+            return;
+        }
+
+        if (!running)
+        {
+            _counterBatteryRunning = false;
+            return;
+        }
+
+        if (!_counterBatteryRunning)
+        {
+            _counterBatteryRunning = true;
+            _ticks.CounterBattery.ScheduleIn(now, PollScheduler.CounterBatteryBroadcastSeconds);
+            EventLog.Append("counter_battery", "game",
+                $"反炮击倒计时启动: 剩余 {FormatCountdown(remaining)} — 归零时敌炮火覆盖本阵地");
+            return;
+        }
+
+        if (!_ticks.CounterBattery.IsDue(now)) return;
+
+        _ticks.CounterBattery.ScheduleIn(now, PollScheduler.CounterBatteryBroadcastSeconds);
+        EventLog.Append("counter_battery", "game", $"反炮击倒计时: 剩余 {FormatCountdown(remaining)}");
+    }
+
+    private static string FormatCountdown(float seconds)
+        => $"{(int)(seconds / 60f):00}:{(int)(seconds % 60f):00}";
+
+    // =======================================================================================
+    // Turret calibration
+    // =======================================================================================
+
+    /// <summary>
+    /// Watches the draggable turret piece for the commander's own hand.
+    ///
+    /// The first placement of a mission is announced as soon as it is seen — that is the moment
+    /// the assumed position stops being a default. Later moves are announced only once the piece
+    /// has settled and only when it actually went somewhere, so dragging it across the table
+    /// produces one event at the destination instead of a stream of them along the way.
+    /// </summary>
+    private void DetectManualCalibration(float now)
     {
         if (!_map.IsBound) return;
+
         var local = _map.TurretLocalOnMap();
-        if (_lastPieceLocal is { } prev
-            && (Math.Abs(local.x - prev.x) > 0.02f || Math.Abs(local.y - prev.y) > 0.02f)
-            && !TurretCalibrated)
-        {
-            TurretCalibrated = true; // player dragged the piece — counts as calibration
-            EventLog.Append("turret_position", "map", "turret piece was moved manually — treated as calibrated");
-        }
+        var previous = _lastPieceLocal;
         _lastPieceLocal = local;
+
+        var moved = previous != null
+                    && (MathF.Abs(local.x - previous.Value.x) > ManualMoveEpsilonLocal
+                        || MathF.Abs(local.y - previous.Value.y) > ManualMoveEpsilonLocal);
+
+        if (moved)
+        {
+            _manualMovePending = true;
+            _manualMoveSettleAt = now + ManualSettleSeconds;
+
+            if (!TurretCalibrated)
+            {
+                TurretCalibrated = true;
+                _manualMovePending = false;
+                _lastReportedTurretKm = MapFrame.LocalToKm(local.x, local.y);
+                EventLog.Append("turret_position", "map",
+                    "turret piece was moved manually — treated as calibrated");
+            }
+
+            return;
+        }
+
+        if (!_manualMovePending || now < _manualMoveSettleAt) return;
+        _manualMovePending = false;
+
+        var km = MapFrame.LocalToKm(local.x, local.y);
+        if (_lastReportedTurretKm is { } last)
+        {
+            var dx = km.x - last.x;
+            var dy = km.y - last.y;
+            if (MathF.Sqrt(dx * dx + dy * dy) <= ManualReportMinDeltaKm) return;
+        }
+
+        _lastReportedTurretKm = km;
+
+        // No coordinates in the text: where the gun stands is something the agent establishes
+        // itself, through the dedicated tool. This only tells it that its cached bearings and
+        // ranges are now stale.
+        EventLog.Append("turret_position", "map",
+            "炮塔棋子被再次手动移动并已稳定 — 假定炮位已变更; 用get_assumed_turret_position复核后重新解算既有目标");
     }
 
-    public UnityEngine.Vector3 ReadTurretLocal() => _map.TurretLocalOnMap();
-
-    public MapEntityDto? FindVisibleEntity(string entityId) => _map.FindEntity(entityId);
-
+    /// <summary>
+    /// Declares where the turret is BELIEVED to stand. Main thread only.
+    /// </summary>
     public string SetDeclaredTurret(float kmX, float kmY)
     {
         if (!Agent.GridMath.InMapBounds((kmX, kmY)))
             return $"km({kmX:F1},{kmY:F1}) is outside the map — rejected (check the grid conversion)";
-        // The map origin is the unplaced-piece sentinel; "calibrating" to it is always the
-        // model echoing the snapshot's placeholder value back, never a real position.
-        if (Math.Abs(kmX - 10.016f) < 0.15f && Math.Abs(kmY - 5.235f) < 0.15f)
+
+        // The origin sentinel: this exact point is what an unplaced piece reads as, so a model
+        // that saw it in a receipt and echoed it back is quoting the placeholder, never a fix.
+        if (MathF.Abs(kmX - MapFrame.MapOffsetX) < OriginSentinelToleranceKm
+            && MathF.Abs(kmY - MapFrame.MapOffsetY) < OriginSentinelToleranceKm)
+        {
             return "km(10.02,5.24) 是地图原点(未校准哨兵值), 不是真实炮位 — rejected。校准依据只能是统帅部电文里的铁巢网格";
-        var result = _map.SetDeclaredTurret(kmX, kmY);
-        if (!result.Contains("not") && !result.Contains("rejected"))
+        }
+
+        var (ok, message) = _map.SetDeclaredTurret(kmX, kmY);
+
+        if (ok)
         {
             TurretCalibrated = true;
+
+            // Refresh the drag detector's baseline, or the move we just made would come back a
+            // moment later as a manual calibration.
             _lastPieceLocal = _map.TurretLocalOnMap();
+            _lastReportedTurretKm = (kmX, kmY);
+            _manualMovePending = false;
         }
-        EventLog.Append("turret_position", "map", result);
+
+        EventLog.Append("turret_position", "map", message);
+        return message;
+    }
+
+    // =======================================================================================
+    // Public operations (main thread only — callers marshal through MainThread.Run)
+    // =======================================================================================
+
+    public StateSnapshotDto BuildSnapshot() => _snapshots.Build(TurretCalibrated);
+
+    public string QueueFireMission(FireMissionRequest req) => _fire.QueueFireMission(req);
+
+    public string AdjustFireMission(AdjustFireRequest req) => _fire.AdjustFireMission(req);
+
+    /// <summary>
+    /// Cancels a queued task. The ledger entry is dropped as well when FCS accepted: FCS now
+    /// records a cancellation in its outcomes, so the fired/failed reconciliation would catch it
+    /// anyway, but a task that is definitely gone must not linger here either. A refused cancel
+    /// leaves the ledger alone — the task is still live and still ours to track.
+    /// </summary>
+    public string CancelPendingFcsTask(int serial)
+    {
+        var result = _fcs.CancelPending(serial);
+        if (result.StartsWith("ok", StringComparison.Ordinal)) _shells.Forget(serial);
+
+        EventLog.Append("fcs_task_update", "fcs", $"cancel #{serial}: {result}");
         return result;
     }
 
-    public string QueueFireMission(FireMissionRequest req)
+    /// <summary>
+    /// Buys a punch card. The budget gate applies to special cards only and only when both the
+    /// price and the balance can actually be read — an unreadable figure lets the purchase
+    /// through, because refusing on a guess costs a mission-critical card.
+    /// </summary>
+    public string RequestCard(
+        string cardId,
+        float? bearingDeg,
+        int priority = 50,
+        string? startGrid = null,
+        float? distanceKm = null)
     {
-        if (!_map.IsBound)
-            return "tactical map not bound";
-
-        float mapX, mapY;
-        string label;
-        var aimDerivedFromTurret = false;
-
-        if (!string.IsNullOrEmpty(req.EntityId))
+        var balance = AmmoReader.ReadRequisitionPoints();
+        if (balance.HasValue)
         {
-            var entity = _map.FindEntity(req.EntityId!);
-            if (entity == null)
-                return $"entity '{req.EntityId}' not visible on the command table (fog of war or bad id)";
-            mapX = entity.MapX;
-            mapY = entity.MapY;
-            label = req.EntityId!;
-        }
-        else if (!string.IsNullOrEmpty(req.TargetPoint))
-        {
-            var turretLocal = _map.TurretLocalOnMap();
-            var turretKm = ((double)(10.016f + turretLocal.x * 3.8164f), (double)(5.235f + turretLocal.y * 3.8164f));
-            if (Agent.GridMath.ParsePoint(req.TargetPoint!, turretKm) is not { } km)
-                return $"cannot parse target '{req.TargetPoint}' (grid like 'K4 5:0' or 'kmX,kmY')";
-            mapX = (float)((km.x - 10.016) / 3.8164);
-            mapY = (float)((km.y - 5.235) / 3.8164);
-            label = req.TargetPoint!;
-        }
-        else if (req.BearingDeg is float bearing && req.DistanceKm is float distance)
-        {
-            var local = _map.SolutionToMapLocal(bearing, distance);
-            mapX = local.x;
-            mapY = local.y;
-            label = $"bearing {bearing:F1}°, {distance:F2} km";
-            aimDerivedFromTurret = true;
-        }
-        else
-        {
-            return "need entityId, target, or bearingDeg+distanceKm";
-        }
-
-        var offX = req.OffsetKmX ?? 0f;
-        var offY = req.OffsetKmY ?? 0f;
-        if (Math.Abs(offX) > 0.5f || Math.Abs(offY) > 0.5f)
-            return "offset exceeds ±0.5km — offsets are for nudging the burst clear of friendlies; aim at different coordinates instead";
-        if (offX != 0f || offY != 0f)
-        {
-            mapX += offX / 3.8164f;
-            mapY += offY / 3.8164f;
-            label += $" 偏移({offX:+0.00;-0.00},{offY:+0.00;-0.00})km";
-        }
-
-        // Defense in depth: never fling a marker off the table on an out-of-bounds solution.
-        var kmXCheck = 10.016f + mapX * 3.8164f;
-        var kmYCheck = 5.235f + mapY * 3.8164f;
-        if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
-        {
-            // target/entityId aims are absolute coordinates — the turret never enters the
-            // math, so OOB means bad params. Only bearing/distance aims derive from the
-            // assumed turret origin, where an off/OOB origin can also be the cause.
-            return aimDerivedFromTurret
-                ? $"aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected. " +
-                  "This aim derives from the ASSUMED turret position + bearing/distance: either the params are wrong, " +
-                  "or the assumed turret position is off/OOB — check get_assumed_turret_position and recalibrate if unreliable"
-                : $"target coordinates km({kmXCheck:F1},{kmYCheck:F1}) are outside the map — rejected. " +
-                  "Bad fire params (grid/km parse or triangulation error); the turret position is irrelevant to this path";
-        }
-        var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, req.Shell, StringComparison.OrdinalIgnoreCase));
-        var maxRange = spec?.ChargeRanges.Count > 0 ? spec.ChargeRanges.Max(c => c.MaxKm) : 40f;
-        if (req.DistanceKm is { } dist && dist > maxRange)
-            return $"distance {dist:F1}km exceeds {req.Shell} max range {maxRange:F1}km — rejected";
-
-        // No budget gate on fire missions: some levels run a 0-point balance with shells
-        // ALREADY LOADED in the guns (no purchase happens when firing those), and points
-        // replenish over time — any bridge-side affordability guess over-rejects. The agent
-        // sees the live balance in every snapshot; an unaffordable buy just fails on FCS side.
-
-        var suffix = SurveyBlast(req.Shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire,
-            out var ffRejection, out var hostilesInRadius);
-        if (ffRejection != null)
-            return ffRejection;
-
-        // Moving-target motion model (telegraph intel): transcribe into the map-local
-        // linear function the patched FCS extrapolates each planning round.
-        Fcs.FcsGateway.MotionSpec? motion = null;
-        if (!string.IsNullOrEmpty(req.MotionFrom))
-        {
-            if (Agent.GridMath.ParsePoint(req.MotionFrom!, (10.016, 5.235)) is not { } m0)
-                return $"cannot parse motionFrom '{req.MotionFrom}'";
-            if (req.MotionBearingDeg is not { } mb || req.MotionSpeedKmh is not { } mv)
-                return "motionFrom requires motionBearingDeg and motionSpeedKmh";
-            var t0 = MissionClockSeconds;
-            if (!string.IsNullOrWhiteSpace(req.MotionAtTime))
+            foreach (var card in AmmoReader.ReadCards())
             {
-                var parts = req.MotionAtTime!.Split(':');
-                if (parts.Length is < 2 or > 3
-                    || !int.TryParse(parts[0], out var hh) || !int.TryParse(parts[1], out var mm)
-                    || (parts.Length == 3 && !int.TryParse(parts[2], out _)))
-                    return $"cannot parse motionAtTime '{req.MotionAtTime}' (expect 24h \"HH:mm\", same clock as event stamps)";
-                var ss = parts.Length == 3 && int.TryParse(parts[2], out var s3) ? s3 : 0;
-                t0 = hh * 3600 + mm * 60 + ss;
+                if (!string.Equals(card.Id, cardId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (card.Cost > 0 && card.Cost > balance.Value)
+                    return $"征用点不足: {cardId} 需{card.Cost}点, 余额仅{balance.Value}点 — rejected";
+
+                break;
             }
-            var rad = mb * MathF.PI / 180f;
-            var speedLocalPerSec = mv / 3600f / 3.8164f;
-            motion = new Fcs.FcsGateway.MotionSpec(
-                (float)((m0.x - 10.016) / 3.8164), (float)((m0.y - 5.235) / 3.8164),
-                MathF.Sin(rad) * speedLocalPerSec, MathF.Cos(rad) * speedLocalPerSec, t0);
         }
 
-        // Blind-fire tripwire (warning, not rejection — pre-planned denial fire is legal):
-        // a kill shell aimed at a point with no revealed hostile in its blast radius and no
-        // motion model is almost always the agent misusing ammo as reconnaissance.
-        if (!IsHarmlessShell(req.Shell) && string.IsNullOrEmpty(req.EntityId)
-            && hostilesInRadius == 0 && motion == null)
+        // Preferred path: FCS's own console coordinator, which owns the priority queue and can
+        // preempt a low-priority purchase with an urgent one.
+        var viaFcs = _fcs.RequestCardPurchase(cardId, bearingDeg, priority, startGrid, distanceKm);
+        if (viaFcs.Accepted)
         {
-            suffix += $"; ⚠盲射警告: {req.Shell}是杀伤弹而弹着半径内无已揭示敌目标——侦察盲射必须用STAR, " +
-                      "校射用DRIL; 只有明确的预判/封锁打击才允许杀伤弹盲射, 否则立即cancel_pending_task省下这笔钱";
+            EventLog.Append("requisition", "fcs", $"card '{cardId}' {viaFcs.Message}");
+            return viaFcs.Message + " (result arrives via events)";
         }
 
-        // Pure aim-point enqueue: no physical marker is touched — the map tokens belong to
-        // the player (T1-T8) and to FCS's own gun indicators (T9/T10). The task is late-bound
-        // via aimLocal; initial bearing/distance derive from the final aim vs the piece.
-        {
-            var turretLocal = _map.TurretLocalOnMap();
-            var ddx = mapX - turretLocal.x;
-            var ddy = mapY - turretLocal.y;
-            var brg = (MathF.Atan2(ddx, ddy) * 57.29578f % 360f + 360f) % 360f;
-            var distKm = MathF.Sqrt(ddx * ddx + ddy * ddy) * 3.8164f;
-            var result = _fcs.EnqueueAimPoint(mapX, mapY, brg, distKm, req.Shell, req.Priority,
-                out var serial, req.EntityId, motion, req.ValidForSeconds);
-            if (result == "ok")
-            {
-                if (serial > 0)
-                    _deployedTasks[serial] = new InFlightShell(label, req.Shell, kmXCheck, kmYCheck, 0f,
-                        Serial: serial, FlightEtaSeconds: distKm / 0.4f + 25f);
-                EventLog.Append("fcs_task_update", "fcs",
-                    $"fire mission queued on {label} ({req.Shell}, P{req.Priority}) as #{serial}");
-                return $"ok (#{serial}){suffix}";
-            }
-            return result;
-        }
+        // Fallback: drive the console by hand. It has no distance dial support, so a card that
+        // needs one (MoveDirection) cannot be bought this way and the parameter is dropped.
+        return RequisitionOperator.StartPurchase(cardId, bearingDeg, null);
+    }
+
+    public string PullSignalHorn() => SignalOperator.Sound();
+
+    /// <summary>
+    /// Prints on a teleprinter. Anything that is not "primary" goes to the battlefield-report
+    /// machine, typos included: a misrouted line is recoverable, a refused one is lost.
+    /// </summary>
+    public bool PrintOnTeleprinter(string which, string[] lines) => TeleprinterReader.Print(which, lines);
+
+    public Vector3 ReadTurretLocal() => _map.TurretLocalOnMap();
+
+    /// <summary>Visible entities only — an entity in the fog must never reach the LLM.</summary>
+    public MapEntityDto? FindVisibleEntity(string entityId) => _map.FindEntity(entityId);
+
+    public List<string> DescribeInFlight() => _shells.DescribeInFlight();
+
+    // =======================================================================================
+    // Master switch and full reset
+    // =======================================================================================
+
+    /// <summary>F11 and the panel button. The only way an agent ever starts.</summary>
+    public void ToggleLlmControl()
+    {
+        var on = !AgentConfig.LlmControl;
+        AgentConfig.LlmControl = on;
+
+        MelonLogger.Msg($"[AgentBridge] LLM control {(on ? "ON" : "OFF")}");
+
+        if (_agent == null) return;
+
+        if (on && !_agent.IsRunning) _agent.Start();
+        else if (!on && _agent.IsRunning) _agent.Stop();
     }
 
     /// <summary>
-    /// Blast-radius survey around an aim point: friendlies inside the radius set `rejection`
-    /// (soft block — allowDanger overrides); visible hostiles inside it are reported in the
-    /// returned suffix so the LLM can verify a merged strike actually covers its cluster.
-    /// Unknown shell (null/unmatched) surveys nothing — empty suffix, no rejection.
+    /// F9 semantics: everything the bridge believes about this mission is discarded.
+    ///
+    /// It stops the agent and never restarts it. Fire control is granted by hand and a reset is
+    /// exactly the moment when the previous grant stopped being informed consent — F11 is the
+    /// one opt-in.
     /// </summary>
-    /// <summary>
-    /// Shells with no harmful effect — exempt from every IFF check: SMK (screening),
-    /// STAR (illumination), TEAR (reveal, zero damage), DRIL (inert training round).
-    /// WP stays checked until its suppression/incendiary mechanics are confirmed harmless.
-    /// </summary>
-    private static readonly string[] HarmlessShells = { "SMK", "STAR", "TEAR", "DRIL" };
-
-    private static bool IsHarmlessShell(string? shell) =>
-        shell != null && HarmlessShells.Contains(shell, StringComparer.OrdinalIgnoreCase);
-
-    private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger, out string? rejection)
-        => SurveyBlast(shell, kmX, kmY, allowDanger, out rejection, out _);
-
-    private string SurveyBlast(string? shell, float kmX, float kmY, bool allowDanger,
-        out string? rejection, out int hostilesInRadius)
+    public void FullReset(string reason)
     {
-        rejection = null;
-        hostilesInRadius = 0;
-        var suffix = "";
-        if (IsHarmlessShell(shell))
-            return suffix;
-        var spec = AmmoReader.ReadShellSpecs().FirstOrDefault(x => string.Equals(x.Id, shell, StringComparison.OrdinalIgnoreCase));
-        var blastKm = spec?.ImpactRadius ?? 0f; // ShellDefinition.ImpactRadius is already km (HE=0.25)
-        if (blastKm <= 0.001f)
-            return suffix;
+        MelonLogger.Msg($"[AgentBridge] full reset ({reason})");
+        TransactionLog.Write("reset", $"full reset: {reason}");
 
-        var friendliesInside = new List<string>();
-        var friendliesNear = new List<string>();
-        var hostilesCovered = new List<string>();
-        var civiliansInside = new List<string>();
-        foreach (var e in _map.ReadEntities())
-        {
-            if (!e.IsAlive) continue;
-            var dx = 10.016f + e.MapX * 3.8164f - kmX;
-            var dy = 5.235f + e.MapY * 3.8164f - kmY;
-            var dKm = MathF.Sqrt(dx * dx + dy * dy);
-            // Civilians are identified by ID, never by faction role — the White Shells
-            // mission tags refugee civilians role=Enemy precisely so they look targetable.
-            var civilian = e.Id.Contains("civil", StringComparison.OrdinalIgnoreCase)
-                           || e.RawId.Contains("civil", StringComparison.OrdinalIgnoreCase)
-                           || e.RawId.Contains("hospital", StringComparison.OrdinalIgnoreCase);
-            var friendly = !civilian && (e.Role.Contains("Ally") || e.Role == "Spotter");
-            if (civilian && dKm <= blastKm)
-                civiliansInside.Add($"{e.Id}(距弹着{dKm:F2}km)");
-            else if (friendly && dKm <= blastKm)
-                friendliesInside.Add($"{e.Id}({e.Role},距弹着{dKm:F2}km)");
-            else if (friendly && dKm <= blastKm * 1.5f)
-                friendliesNear.Add($"{e.Id}({dKm:F2}km)");
-            else if (!civilian && !friendly && dKm <= blastKm)
-                hostilesCovered.Add($"{e.Id}({dKm:F2}km)");
-        }
+        // Before anything else: queued closures were written against the world we are about to
+        // discard, and one of them could really fire a gun.
+        MainThread.Clear();
 
-        // Civilian protection is NON-OVERRIDABLE: allowDangerouslyFriendlyFire covers
-        // friendly troops accepting risk, never civilians — regardless of what faction the
-        // game or Supreme Command paints them as.
-        if (civiliansInside.Count > 0)
-        {
-            rejection = $"平民保护(不可覆盖) — 已拒绝: {string.Join(", ", civiliansInside)} 在弹着点km({kmX:F2},{kmY:F2})" +
-                        $"的{shell}爆炸半径{blastKm * 1000f:F0}m内。allowDangerouslyFriendlyFire对平民无效; " +
-                        "换弹着点或换更小半径弹种, 平民不是目标——无论其阵营标注是什么";
-            return suffix;
-        }
+        _agent?.Stop();
+        _agent?.ClearLog();
 
-        if (friendliesInside.Count > 0 && !allowDanger)
-        {
-            rejection = $"友军误伤警告 — 已拒绝: {string.Join(", ", friendliesInside)} 在弹着点km({kmX:F2},{kmY:F2})" +
-                        $"的{shell}爆炸半径{blastKm * 1000f:F0}m内。用offsetKmX/offsetKmY把弹着点向远离友军一侧移出半径" +
-                        "(会牺牲部分毁伤), 或换更小爆炸半径的弹种; 确认接受误伤才用allowDangerouslyFriendlyFire=true重试";
-            return suffix;
-        }
-        if (friendliesInside.Count > 0)
-            suffix += $"; 警告: 已确认误伤风险, 友军在爆炸半径内: {string.Join(", ", friendliesInside)}";
-        else if (friendliesNear.Count > 0)
-            suffix += $"; 注意: 友军贴近弹着点(≤1.5×爆炸半径): {string.Join(", ", friendliesNear)}";
-        hostilesInRadius = hostilesCovered.Count;
-        if (hostilesCovered.Count > 0)
-            suffix += $"; 爆炸半径({blastKm * 1000f:F0}m)可同时覆盖: {string.Join(", ", hostilesCovered)}";
-        return suffix;
-    }
+        // Stale events must never be replayed into a restarted agent's fresh context.
+        EventLog.Clear();
 
-    /// <summary>
-    /// LLM-initiated last-minute re-aim of an already-queued/in-preparation FCS task.
-    /// Purely fire-and-forget from FCS's perspective: execution never waits for the agent —
-    /// no adjustment means the task fires on its original solution; an adjustment is laid
-    /// by the FCS staged re-solve pipeline (pre-aim / pre-fire / manual-wait) on its next
-    /// pass. Main thread only.
-    /// </summary>
-    public string AdjustFireMission(AdjustFireRequest req)
-    {
-        if (!_map.IsBound)
-            return "tactical map not bound";
+        _lastCardResult = null;
+        _shells.Clear();
 
-        float mapX, mapY;
-        string label;
-        if (!string.IsNullOrEmpty(req.EntityId))
-        {
-            var entity = _map.FindEntity(req.EntityId!);
-            if (entity == null)
-                return $"entity '{req.EntityId}' not visible on the command table (fog of war or bad id)";
-            mapX = entity.MapX;
-            mapY = entity.MapY;
-            label = req.EntityId!;
-        }
-        else if (!string.IsNullOrEmpty(req.TargetPoint))
-        {
-            var turretLocal = _map.TurretLocalOnMap();
-            var turretKm = ((double)(10.016f + turretLocal.x * 3.8164f), (double)(5.235f + turretLocal.y * 3.8164f));
-            if (Agent.GridMath.ParsePoint(req.TargetPoint!, turretKm) is not { } km)
-                return $"cannot parse target '{req.TargetPoint}' (grid like 'K4 5:0' or 'kmX,kmY')";
-            mapX = (float)((km.x - 10.016) / 3.8164);
-            mapY = (float)((km.y - 5.235) / 3.8164);
-            label = req.TargetPoint!;
-        }
-        else
-        {
-            return "need target or entityId";
-        }
+        _map.Unbind();
+        Agent.GridMath.ResetMapBounds();
+        _impacts.Reset();
+        _teleprinters.Reset();
 
-        var offX = req.OffsetKmX ?? 0f;
-        var offY = req.OffsetKmY ?? 0f;
-        if (Math.Abs(offX) > 0.5f || Math.Abs(offY) > 0.5f)
-            return "offset exceeds ±0.5km — offsets are for nudging the burst clear of friendlies; aim at different coordinates instead";
-        if (offX != 0f || offY != 0f)
-        {
-            mapX += offX / 3.8164f;
-            mapY += offY / 3.8164f;
-            label += $" 偏移({offX:+0.00;-0.00},{offY:+0.00;-0.00})km";
-        }
+        _baselineCamera = null;
+        _baselineCameraId = 0;
+        _worldClock = null;
+        _worldClockInventoryLogged = false;
+        _counterBatteryRunning = false;
 
-        var kmXCheck = 10.016f + mapX * 3.8164f;
-        var kmYCheck = 5.235f + mapY * 3.8164f;
-        if (!Agent.GridMath.InMapBounds((kmXCheck, kmYCheck)))
-            return $"new aim point km({kmXCheck:F1},{kmYCheck:F1}) is outside the map — rejected";
+        TurretCalibrated = false;
+        _lastPieceLocal = null;
+        _lastReportedTurretKm = null;
+        _manualMovePending = false;
 
-        // Same friendly-fire discipline as fire: the re-aimed burst is surveyed with the
-        // task's own shell (looked up from the live FCS set by serial).
-        _fcs.TryGetTaskInfo(req.Serial, out var shell, out _);
-        var suffix = SurveyBlast(shell, kmXCheck, kmYCheck, req.AllowDangerouslyFriendlyFire, out var ffRejection);
-        if (ffRejection != null)
-            return ffRejection;
+        LastFcsSummary = "";
 
-        var result = _fcs.AdjustTaskAim(req.Serial, mapX, mapY);
-        if (result.StartsWith("ok"))
-        {
-            // Keep the impact-matching aim point current; no physical marker is involved
-            // (T9/T10 follow automatically via the FCS gun-marker loop).
-            if (_deployedTasks.TryGetValue(req.Serial, out var deployed))
-                _deployedTasks[req.Serial] = deployed with { Label = label, KmX = kmXCheck, KmY = kmYCheck };
-            EventLog.Append("fcs_task_update", "fcs", $"#{req.Serial} 瞄准点已调整 → {label}");
-        }
-        return result + suffix;
-    }
-
-    /// <summary>Pull the bunker signal horn physically. Main thread only.</summary>
-    public string PullSignalHorn()
-    {
-        var horn = SignalOperator.FindHorn(out var candidates);
-        if (horn == null)
-            return "本关场景中没有找到号角装置(无匹配horn/signal/siren的交互件) — 无法发出信号";
-        if (!horn.isActive)
-            return $"号角 '{horn.gameObject.name}' 当前不可交互 — 可能尚未满足拉响条件";
-
-        horn.OnClickDown();
-        MelonCoroutines.Start(ReleaseHornClick(horn));
-        var extra = candidates.Count > 1 ? $" (场景候选: {string.Join(", ", candidates)})" : "";
-        EventLog.Append("signal", "game", $"号角已拉响: {horn.gameObject.name}{extra}");
-        return $"号角已拉响: {horn.gameObject.name}";
-    }
-
-    private static System.Collections.IEnumerator ReleaseHornClick(LookAtTarget horn)
-    {
-        yield return new UnityEngine.WaitForSeconds(0.15f);
-        try { horn.OnClickUp(); } catch { }
-    }
-
-    public bool PrintOnTeleprinter(string which, string[] lines)
-    {
-        var printer = which.Equals("primary", StringComparison.OrdinalIgnoreCase)
-            ? Teleprinter.Teleprinters.Primary
-            : Teleprinter.Teleprinters.Secondary;
-        return _telegraph.Print(printer, lines);
+        // Shorter than the routine retry: a reset is deliberate and the map is expected back at once.
+        _ticks.ResetAll();
+        _ticks.Bind.ScheduleIn(
+            Il2CppSafe.Get(() => Time.realtimeSinceStartup, 0f),
+            PollScheduler.RebindAfterResetSeconds);
     }
 }

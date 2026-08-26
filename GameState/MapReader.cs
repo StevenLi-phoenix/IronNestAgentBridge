@@ -1,4 +1,5 @@
-using Il2Cpp;
+﻿using Il2Cpp;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppTMPro;
 using MelonLoader;
 using UnityEngine;
@@ -6,331 +7,522 @@ using UnityEngine;
 namespace IronNestAgentBridge.GameState;
 
 /// <summary>
-/// Reads the tactical map ("指挥桌"): revealed entities, player markers, turret location.
-/// Same scene-object contract as IronNestFCS's MapTable, but read-only and independent of it.
-/// Map-local units convert to kilometres with the 3.8164 factor used by the FCS mod.
+/// The command table: scene binding, sheet extent, the turret origin, player markers and the
+/// enemy entity list. Stateful — the mod holds exactly one instance and its lifetime follows the
+/// scene.
+///
+/// Fog of war is enforced here and nowhere else: <see cref="ReadEntities"/> drops invisible
+/// entities by default, <see cref="FindEntity"/> refuses them outright, and the only caller
+/// allowed to pass <c>includeHidden: true</c> is this class's own event diff — whose output never
+/// leaves as anything but events about entities that are visible right now.
 /// </summary>
-public class MapReader
+public sealed class MapReader
 {
-    private const float MapLocalToKm = 3.8164f;
+    /// <summary>
+    /// The authoritative physical anchor. Three different objects answer to this name; this one
+    /// is the real one and it never moves. <c>Canvas/MapRoot/TurretLocation</c> is a static icon
+    /// and <c>Draggable Surface/Player Turret Piece</c> is the draggable inference — do not mix.
+    /// </summary>
+    public const string TurretAnchorName = "TurretLocation";
 
-    private Transform? _turretLocation;
+    public const string MapSurfaceName = "Draggable Surface";
+    public const string FireMissionRootName = "Fire Mission Root";
+
+    /// <summary>
+    /// Where headquarters BELIEVES the turret stands. FCS and the bridge both solve from this
+    /// piece's localPosition, so a misplaced piece means missed shots — by design.
+    /// </summary>
+    public const string PlayerTurretPieceName = "Player Turret Piece";
+
+    public const string MarkerTokenName = "MapToken_Artillery";
+
+    /// <summary>Seconds between bind attempts while the scene is not ready. Driven by the mod.</summary>
+    public const float BindRetrySeconds = 2f;
+
+    /// <summary>
+    /// Seconds between entity polls. The impact poll shares this beat, and the two must be
+    /// guarded separately: a map poll failure may not stop impacts from being recorded.
+    /// </summary>
+    public const float MapPollSeconds = 0.5f;
+
+    /// <summary>map-local units; roughly 38 m. Not km and not metres.</summary>
+    private const float MoveEpsilonLocal = 0.01f;
+
+    /// <summary>Below this canvas alpha the entity is inside the fog as far as the player is concerned.</summary>
+    private const float VisibleAlpha = 0.05f;
+
+    private Transform? _turretAnchor;
     private Transform? _mapSurface;
     private Transform? _fireMissionRoot;
-    private readonly Dictionary<int, Transform> _markers = new();
-    private readonly Dictionary<int, Vector3> _markerHomes = new();
 
-    // Previous snapshot keyed by entity id, for diffing.
+    /// <summary>Cached lookup of the draggable turret piece; dropped on <see cref="Unbind"/>.</summary>
+    private Transform? _turretPiece;
+
+    private readonly Dictionary<int, Transform> _markers = new();
+
+    /// <summary>Last polled entity table, keyed by id, INCLUDING entities hidden by fog.</summary>
     private Dictionary<string, MapEntityDto> _previous = new();
 
     public bool IsBound { get; private set; }
 
+    /// <summary>Handed to <see cref="ImpactReader"/>; null until bound.</summary>
     public Transform? MapSurface => _mapSurface;
 
-    /// <summary>
-    /// Real km extent of THIS mission's map, measured from the physical map sheet at bind.
-    /// Null when no plausible sheet renderer was found (callers fall back to the generous
-    /// global envelope). Missions have different sheet sizes — the hardcoded A..Z envelope
-    /// let blind fire sail kilometres past a small map's edge.
-    /// </summary>
+    /// <summary>Measured sheet envelope in km, or null when the measurement was implausible.</summary>
     public (float MinX, float MinY, float MaxX, float MaxY)? KmBounds { get; private set; }
 
-    public void Unbind()
-    {
-        IsBound = false;
-        KmBounds = null;
-        _turretLocation = null;
-        _mapSurface = null;
-        _fireMissionRoot = null;
-        _markers.Clear();
-        _markerHomes.Clear();
-        _previous = new Dictionary<string, MapEntityDto>();
-    }
+    // ---------------------------------------------------------------- binding
 
+    /// <summary>
+    /// Binds the three scene objects and measures the sheet. Returns false without side effects
+    /// beyond <see cref="Unbind"/> when either required object is missing, so the caller can
+    /// simply retry on its own cadence.
+    /// </summary>
     public bool TryBind()
     {
-        _turretLocation = GameObject.Find("TurretLocation")?.transform;
-        _mapSurface = GameObject.Find("Draggable Surface")?.transform;
-        _fireMissionRoot = GameObject.Find("Fire Mission Root")?.transform;
+        Unbind();
 
-        if (_turretLocation == null || _mapSurface == null)
-            return false;
+        var anchor = Il2CppSafe.GetRef(() => GameObject.Find(TurretAnchorName));
+        var surface = Il2CppSafe.GetRef(() => GameObject.Find(MapSurfaceName));
+        if (anchor == null || surface == null) return false;
 
-        _markers.Clear();
-        for (var i = 0; i < _mapSurface.childCount; i++)
+        _turretAnchor = anchor.transform;
+        _mapSurface = surface.transform;
+
+        // Optional: without it we simply read no entities.
+        var root = Il2CppSafe.GetRef(() => GameObject.Find(FireMissionRootName));
+        _fireMissionRoot = root == null ? null : root.transform;
+
+        ScanMarkers();
+
+        KmBounds = MeasureSheetKm();
+        if (KmBounds.HasValue)
         {
-            var child = _mapSurface.GetChild(i);
-            if (child.name != "MapToken_Artillery")
-                continue;
-            var tmp = child.GetComponentInChildren<TextMeshPro>();
-            if (tmp != null && int.TryParse(tmp.text, out var id))
-            {
-                _markers[id] = child;
-                _markerHomes[id] = child.localPosition; // parking spot to return to after the shot
-            }
+            var b = KmBounds.Value;
+            Agent.GridMath.SetMapBoundsKm(b.MinX, b.MinY, b.MaxX, b.MaxY);
+        }
+        else
+        {
+            // A stale envelope from the previous mission is worse than no envelope at all.
+            Agent.GridMath.ResetMapBounds();
         }
 
-        KmBounds = MeasureKmBounds(_mapSurface);
         IsBound = true;
         return true;
     }
 
     /// <summary>
-    /// Measure the map sheet: largest-area renderer under the surface, world AABB corners
-    /// inverse-transformed into surface-local space, converted to km. Sanity-gated so a
-    /// mis-picked prop can never shrink or explode the firing envelope.
+    /// Drops every scene reference and all derived state. Called on scene load and on the full
+    /// reset; after it the reader is indistinguishable from a freshly constructed one.
     /// </summary>
-    private static (float, float, float, float)? MeasureKmBounds(Transform surface)
+    public void Unbind()
     {
+        // Shell specifications belong to the mission that loaded them. Only drop them when a real
+        // binding is being torn down, so a bind-retry loop does not thrash the cache.
+        if (IsBound) AmmoReader.ClearSpecCache();
+
+        IsBound = false;
+        KmBounds = null;
+        _turretAnchor = null;
+        _mapSurface = null;
+        _fireMissionRoot = null;
+        _turretPiece = null;
+        _markers.Clear();
+        _previous = new Dictionary<string, MapEntityDto>();
+        Agent.GridMath.ResetMapBounds();
+    }
+
+    private void ScanMarkers()
+    {
+        var surface = _mapSurface;
+        if (surface == null) return;
+
+        var count = Il2CppSafe.Get(() => surface.childCount, 0);
+        for (var i = 0; i < count; i++)
+        {
+            var child = Il2CppSafe.GetRef(() => surface.GetChild(i));
+            if (child == null) continue;
+            if (Il2CppSafe.Get(() => child.name, "") != MarkerTokenName) continue;
+
+            var label = Il2CppSafe.GetRef(() => child.GetComponentInChildren<TextMeshPro>());
+            if (label == null) continue;
+
+            var text = Il2CppSafe.Get(() => label.text, "");
+            if (!int.TryParse(text.Trim(), out var id)) continue;
+
+            _markers[id] = child;
+        }
+    }
+
+    // ---------------------------------------------------------------- sheet extent
+
+    /// <summary>
+    /// Measures the real firing envelope of THIS mission from the largest renderer under the map
+    /// surface. A hard-coded A..Z envelope once let blind fire land kilometres past a small map's
+    /// edge, which is why the measurement exists at all.
+    ///
+    /// Returns null — and keeps the caller on the generous fallback envelope — whenever the
+    /// measured sheet is not a plausible tactical map.
+    /// </summary>
+    private (float MinX, float MinY, float MaxX, float MaxY)? MeasureSheetKm()
+    {
+        var surface = _mapSurface;
+        if (surface == null) return null;
+
         Renderer? sheet = null;
-        var sheetArea = 0f;
-        var sheetMin = Vector2.zero;
-        var sheetMax = Vector2.zero;
+        var bestArea = 0f;
+        float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
 
-        foreach (var renderer in surface.GetComponentsInChildren<Renderer>())
+        Il2CppArrayBase<Renderer>? found;
+        try { found = surface.GetComponentsInChildren<Renderer>(); }
+        catch { return null; }
+        if (found == null) return null;
+
+        Il2CppArrayBase<Renderer> renderers = found;
+        var rendererCount = Il2CppSafe.Get(() => renderers.Length, 0);
+        for (var r = 0; r < rendererCount; r++)
         {
-            var b = renderer.bounds;
-            var min = new Vector2(float.MaxValue, float.MaxValue);
-            var max = new Vector2(float.MinValue, float.MinValue);
-            for (var i = 0; i < 8; i++)
+            var renderer = Il2CppSafe.GetRef(() => renderers[r]);
+            if (renderer == null) continue;
+
+            try
             {
-                var corner = new Vector3(
-                    (i & 1) == 0 ? b.min.x : b.max.x,
-                    (i & 2) == 0 ? b.min.y : b.max.y,
-                    (i & 4) == 0 ? b.min.z : b.max.z);
-                var local = surface.InverseTransformPoint(corner);
-                min = Vector2.Min(min, new Vector2(local.x, local.y));
-                max = Vector2.Max(max, new Vector2(local.x, local.y));
-            }
-            var area = (max.x - min.x) * (max.y - min.y);
-            if (area > sheetArea)
-            {
-                sheetArea = area;
+                var bounds = renderer.bounds;
+                var lo = bounds.min;
+                var hi = bounds.max;
+
+                var rMinX = float.MaxValue;
+                var rMinY = float.MaxValue;
+                var rMaxX = float.MinValue;
+                var rMaxY = float.MinValue;
+
+                // All eight corners: the surface may be rotated relative to world space.
+                for (var c = 0; c < 8; c++)
+                {
+                    var corner = new Vector3(
+                        (c & 1) == 0 ? lo.x : hi.x,
+                        (c & 2) == 0 ? lo.y : hi.y,
+                        (c & 4) == 0 ? lo.z : hi.z);
+                    var local = surface.InverseTransformPoint(corner);
+                    if (local.x < rMinX) rMinX = local.x;
+                    if (local.y < rMinY) rMinY = local.y;
+                    if (local.x > rMaxX) rMaxX = local.x;
+                    if (local.y > rMaxY) rMaxY = local.y;
+                }
+
+                var area = (rMaxX - rMinX) * (rMaxY - rMinY);
+                if (area <= bestArea) continue;
+
+                bestArea = area;
                 sheet = renderer;
-                sheetMin = min;
-                sheetMax = max;
+                minX = rMinX;
+                minY = rMinY;
+                maxX = rMaxX;
+                maxY = rMaxY;
+            }
+            catch
+            {
+                // One unreadable renderer must not abort the survey.
             }
         }
 
-        if (sheet == null)
-            return null;
+        if (sheet == null) return null;
 
-        var minKmX = 10.016f + sheetMin.x * MapLocalToKm;
-        var minKmY = 5.235f + sheetMin.y * MapLocalToKm;
-        var maxKmX = 10.016f + sheetMax.x * MapLocalToKm;
-        var maxKmY = 5.235f + sheetMax.y * MapLocalToKm;
-        var width = maxKmX - minKmX;
-        var height = maxKmY - minKmY;
-        if (width is < 5f or > 40f || height is < 3f or > 30f)
+        var kmLo = MapFrame.LocalToKm(minX, minY);
+        var kmHi = MapFrame.LocalToKm(maxX, maxY);
+        var width = kmHi.x - kmLo.x;
+        var height = kmHi.y - kmLo.y;
+
+        // Plausibility gate: anything outside these spans is some other renderer, not the sheet.
+        if (width < 5f || width > 40f || height < 3f || height > 30f)
         {
+            var name = Il2CppSafe.Get(() => sheet.gameObject.name, "?");
             MelonLogger.Warning(
-                $"[AgentBridge] map sheet measurement implausible ({width:F1}x{height:F1}km via '{sheet.gameObject.name}') — keeping generous bounds");
+                $"[AgentBridge] map sheet measurement implausible ({width:F1}x{height:F1}km via '{name}') — keeping generous bounds");
             return null;
         }
-        return (minKmX, minKmY, maxKmX, maxKmY);
+
+        return (kmLo.x, kmLo.y, kmHi.x, kmHi.y);
     }
 
-    public const string PlayerTurretPieceName = "Player Turret Piece";
-    private Transform? _turretMapModel;
+    // ---------------------------------------------------------------- turret origin
 
-    /// <summary>The player's draggable turret piece on the table — inferred ground truth.</summary>
-    private Transform? TurretMapModel()
-    {
-        if (_turretMapModel == null && _mapSurface != null)
-            _turretMapModel = _mapSurface.Find(PlayerTurretPieceName);
-        return _turretMapModel;
-    }
-
+    /// <summary>
+    /// The firing origin in map-local space. Priority is fixed and must not be reordered:
+    /// the draggable piece is the inference headquarters actually acts on; the real anchor is
+    /// only a fallback for missions that have no piece.
+    /// </summary>
     public Vector3 TurretLocalOnMap()
     {
-        if (_mapSurface == null)
-            return Vector3.zero;
-        if (TurretMapModel() is { } piece)
-            return piece.localPosition;
-        if (_turretLocation == null)
-            return Vector3.zero;
-        return _mapSurface.InverseTransformPoint(_turretLocation.position);
+        var surface = _mapSurface;
+        if (surface == null) return Vector3.zero;
+
+        var piece = ResolveTurretPiece();
+        if (piece != null)
+        {
+            var local = Il2CppSafe.Get(() => piece.localPosition, Vector3.zero);
+            return local;
+        }
+
+        var anchor = _turretAnchor;
+        if (anchor == null) return Vector3.zero;
+
+        return Il2CppSafe.Get(() => surface.InverseTransformPoint(anchor.position), Vector3.zero);
     }
 
-    private (float bearing, float distanceKm) Solution(Vector3 entityLocal, Vector3 turretLocal)
+    private Transform? ResolveTurretPiece()
+    {
+        if (_turretPiece != null) return _turretPiece;
+
+        var surface = _mapSurface;
+        if (surface == null) return null;
+
+        _turretPiece = Il2CppSafe.GetRef(() => surface.Find(PlayerTurretPieceName));
+        return _turretPiece;
+    }
+
+    /// <summary>
+    /// Moves the inference piece only. The real anchor is never touched: this declares where we
+    /// BELIEVE the turret is, which is exactly what registration fire corrects.
+    /// </summary>
+    public (bool ok, string message) SetDeclaredTurret(float kmX, float kmY)
+    {
+        if (!IsBound || _mapSurface == null) return (false, "map not bound");
+
+        var piece = ResolveTurretPiece();
+        if (piece == null) return (false, $"'{PlayerTurretPieceName}' not found on the map");
+
+        var moved = false;
+        Il2CppSafe.Do(() =>
+        {
+            var current = piece.localPosition;
+            // z carries the piece's resting height above the sheet; only the plane is declared.
+            var target = MapFrame.KmToLocal(kmX, kmY, current.z);
+            piece.localPosition = target;
+            moved = true;
+        });
+
+        if (!moved) return (false, $"'{PlayerTurretPieceName}' not found on the map");
+
+        return (true, $"turret piece moved to km({kmX:F2},{kmY:F2}); solutions now use it as origin");
+    }
+
+    // ---------------------------------------------------------------- solving helpers
+
+    /// <summary>Situational bearing/range from the turret piece to a map-local point.</summary>
+    public (float bearingDeg, float distanceKm) Solution(Vector3 entityLocal, Vector3 turretLocal)
     {
         var delta = entityLocal - turretLocal;
-        delta.z = 0;
-        var distance = delta.magnitude * MapLocalToKm;
-        var angle = Vector3.SignedAngle(delta, Vector3.up, Vector3.forward);
-        if (angle < 0) angle += 360f;
-        return (angle, distance);
+        delta.z = 0f;
+        return (MapFrame.BearingOf(delta), MapFrame.DistanceKm(delta));
     }
 
+    /// <summary>Inverse of <see cref="Solution"/>, anchored on the current turret piece.</summary>
+    public Vector3 SolutionToMapLocal(float bearingDeg, float distanceKm)
+        => MapFrame.FromBearing(TurretLocalOnMap(), bearingDeg, distanceKm);
+
+    // ---------------------------------------------------------------- markers
+
+    /// <summary>
+    /// Player artillery tokens. MapX/MapY are map-local, not km — the bridge never moves these
+    /// tokens, it only reports them.
+    /// </summary>
     public List<MarkerDto> ReadMarkers()
     {
         var result = new List<MarkerDto>();
         if (!IsBound) return result;
-        var turretLocal = TurretLocalOnMap();
-        foreach (var (id, tr) in _markers)
+
+        var turret = TurretLocalOnMap();
+        foreach (var pair in _markers)
         {
-            if (tr == null) continue;
-            var local = tr.localPosition;
-            var (bearing, dist) = Solution(local, turretLocal);
-            result.Add(new MarkerDto { Id = id, MapX = local.x, MapY = local.y, BearingDeg = bearing, DistanceKm = dist });
+            var transform = pair.Value;
+            if (transform == null) continue;
+
+            var local = Il2CppSafe.Get(() => transform.localPosition, Vector3.zero);
+            var solution = Solution(local, turret);
+            result.Add(new MarkerDto
+            {
+                Id = pair.Key,
+                MapX = local.x,
+                MapY = local.y,
+                BearingDeg = solution.bearingDeg,
+                DistanceKm = solution.distanceKm,
+            });
         }
+
         return result;
     }
 
-    public IReadOnlyCollection<int> MarkerIds => _markers.Keys;
-
-    /// <summary>Convert a turret-relative firing solution back to map-local coordinates.</summary>
-    public Vector3 SolutionToMapLocal(float bearingDeg, float distanceKm)
-    {
-        var turretLocal = TurretLocalOnMap();
-        var r = distanceKm / MapLocalToKm;
-        var rad = bearingDeg * Mathf.Deg2Rad;
-        return new Vector3(turretLocal.x + Mathf.Sin(rad) * r, turretLocal.y + Mathf.Cos(rad) * r, 0f);
-    }
-
-    /// <summary>Move a marker onto a map-local position (used for entity-targeted fire missions).</summary>
-    public bool TryMoveMarker(int id, float mapX, float mapY)
-    {
-        if (!_markers.TryGetValue(id, out var tr) || tr == null)
-            return false;
-        var p = tr.localPosition;
-        tr.localPosition = new Vector3(mapX, mapY, p.z);
-        return true;
-    }
-
-    /// <summary>Visible entities only — fire missions must not target fog-of-war contacts.</summary>
-    /// <summary>
-    /// Move the player's turret piece on the table (NOT the real turret) to a km
-    /// position. FCS and our solvers read the piece as the firing origin.
-    /// </summary>
-    public string SetDeclaredTurret(float kmX, float kmY)
-    {
-        if (_mapSurface == null)
-            return "map not bound";
-        if (TurretMapModel() is not { } piece)
-            return $"'{PlayerTurretPieceName}' not found on the map";
-
-        var local = piece.localPosition;
-        local.x = (kmX - 10.016f) / MapLocalToKm;
-        local.y = (kmY - 5.235f) / MapLocalToKm;
-        piece.localPosition = local;
-        return $"turret piece moved to km({kmX:F2},{kmY:F2}); solutions now use it as origin";
-    }
-
-    public bool ReturnMarkerHome(int id)
-    {
-        if (!_markers.TryGetValue(id, out var tr) || tr == null || !_markerHomes.TryGetValue(id, out var home))
-            return false;
-        tr.localPosition = home;
-        return true;
-    }
-
-    public MapEntityDto? FindEntity(string entityId)
-        => ReadEntities().FirstOrDefault(e => e.Visible && (e.Id == entityId || e.RawId == entityId));
+    // ---------------------------------------------------------------- entities
 
     /// <summary>
-    /// includeHidden=true is for internal diffing only. Anything exposed to the LLM
-    /// must use the default: fog-of-war entities would be wallhack intel.
+    /// Reads the entity table. <paramref name="includeHidden"/> is reserved for this class's own
+    /// event diff — an entity that walks into the fog must not read as "disappeared" and then
+    /// re-emit a reveal on its way out. Any path that reaches the LLM uses the default.
     /// </summary>
     public List<MapEntityDto> ReadEntities(bool includeHidden = false)
     {
         var result = new List<MapEntityDto>();
-        if (!IsBound || _fireMissionRoot == null || _mapSurface == null)
-            return result;
+        var surface = _mapSurface;
+        var root = _fireMissionRoot;
+        if (!IsBound || surface == null || root == null) return result;
 
-        var turretLocal = TurretLocalOnMap();
-        for (var i = 0; i < _fireMissionRoot.childCount; i++)
+        var turret = TurretLocalOnMap();
+        var count = Il2CppSafe.Get(() => root.childCount, 0);
+
+        for (var i = 0; i < count; i++)
         {
-            var child = _fireMissionRoot.GetChild(i);
-            var loc = child.GetComponent<EntityLocation>();
-            if (loc == null) continue;
+            var child = Il2CppSafe.GetRef(() => root.GetChild(i));
+            if (child == null) continue;
 
-            MapEntity? entity = null;
-            try { entity = loc.Entity; } catch { /* not initialized yet */ }
+            var location = Il2CppSafe.GetRef(() => child.GetComponent<EntityLocation>());
+            if (location == null) continue;
+
+            // Null while the location is still initialising; skip this frame, not the mission.
+            var entity = Il2CppSafe.GetRef(() => location.Entity);
             if (entity == null) continue;
 
-            var local = _mapSurface.InverseTransformPoint(child.position);
-            var (bearing, dist) = Solution(local, turretLocal);
+            var visible = IsVisible(location);
+            if (!visible && !includeHidden) continue;
 
-            var visible = false;
-            try
+            var local = Il2CppSafe.Get(() => surface.InverseTransformPoint(child.position), Vector3.zero);
+            var solution = Solution(local, turret);
+
+            var dto = new MapEntityDto
             {
-                visible = loc.VisualRoot != null && loc.VisualRoot.activeInHierarchy;
-                if (visible && loc.VisibilityGroup != null)
-                    visible = loc.VisibilityGroup.alpha > 0.05f;
-            }
-            catch { /* keep false */ }
-
-            string[] immune = Array.Empty<string>();
-            try
-            {
-                if (entity.ImmuneShells != null)
-                    immune = entity.ImmuneShells.ToArray();
-            }
-            catch { }
-
-            if (!visible && !includeHidden)
-                continue;
-
-            result.Add(new MapEntityDto
-            {
-                Id = entity.ID ?? child.name,
-                RawId = entity.RawID ?? "",
-                Role = ((Il2Cpp.EntityRoles)entity.Role).ToString(),
-                RoleValue = (int)entity.Role,
-                State = ((Il2Cpp.MapEntityStates)entity.State).ToString(),
-                StateValue = (int)entity.State,
-                Health = entity.Health,
-                MaxHealth = entity.MaxHealth,
-                Armour = entity.Armour,
-                Stars = entity.Stars,
-                IsAlive = entity.IsAlive,
+                Id = Il2CppSafe.GetRef(() => entity.ID) ?? Il2CppSafe.Get(() => child.name, ""),
+                RawId = Il2CppSafe.GetRef(() => entity.RawID) ?? "",
                 Visible = visible,
-                ImmuneShells = immune,
                 MapX = local.x,
                 MapY = local.y,
-                BearingDeg = bearing,
-                DistanceKm = dist,
-            });
+                BearingDeg = solution.bearingDeg,
+                DistanceKm = solution.distanceKm,
+            };
+
+            Il2CppSafe.Do(() => dto.Role = entity.Role.ToString());
+            Il2CppSafe.Do(() => dto.RoleValue = (int)entity.Role);
+            Il2CppSafe.Do(() => dto.State = entity.State.ToString());
+            Il2CppSafe.Do(() => dto.StateValue = (int)entity.State);
+            Il2CppSafe.Do(() => dto.Health = entity.Health);
+            Il2CppSafe.Do(() => dto.MaxHealth = entity.MaxHealth);
+            Il2CppSafe.Do(() => dto.Armour = entity.Armour);
+            // Semantics unknown; forwarded verbatim rather than dropped.
+            Il2CppSafe.Do(() => dto.Stars = entity.Stars);
+            Il2CppSafe.Do(() => dto.IsAlive = entity.IsAlive);
+            Il2CppSafe.Do(() => dto.ImmuneShells = ReadImmuneShells(entity));
+
+            result.Add(dto);
         }
+
         return result;
     }
 
+    private static string[] ReadImmuneShells(MapEntity entity)
+    {
+        var list = entity.ImmuneShells;
+        if (list == null) return Array.Empty<string>();
+
+        var buffer = new List<string>();
+        var count = list.Count;
+        for (var i = 0; i < count; i++)
+        {
+            var index = i;
+            var id = Il2CppSafe.GetRef(() => list[index]);
+            if (!string.IsNullOrEmpty(id)) buffer.Add(id!);
+        }
+        return buffer.ToArray();
+    }
+
     /// <summary>
-    /// Snapshot + diff against previous poll. Emits events for the LLM: entities newly revealed
-    /// on the command table (which never appear on the telegraph), movement, damage, destruction.
+    /// Fog test. The visual root carries reveal state; the canvas group fades it. Anything that
+    /// throws counts as invisible — the safe direction, because a false "visible" leaks map
+    /// knowledge the player does not have.
+    /// </summary>
+    private static bool IsVisible(EntityLocation location)
+    {
+        try
+        {
+            var root = location.VisualRoot;
+            if (root == null || !root.activeInHierarchy) return false;
+
+            var group = location.VisibilityGroup;
+            if (group != null && group.alpha <= VisibleAlpha) return false;
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Resolves an LLM-supplied target id against the VISIBLE table only, matching either the
+    /// display id or the raw asset id. Case sensitive on purpose: the ids handed out in the
+    /// snapshot are meant to be echoed back verbatim.
+    /// </summary>
+    public MapEntityDto? FindEntity(string entityId)
+    {
+        foreach (var entity in ReadEntities())
+        {
+            if (entity.Visible && (entity.Id == entityId || entity.RawId == entityId)) return entity;
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------- entity events
+
+    /// <summary>
+    /// Diffs the full entity table against the previous poll and emits map events. Events are
+    /// only ever emitted for entities that are visible RIGHT NOW, so the hidden half of the table
+    /// exists purely to keep the diff honest.
     /// </summary>
     public void PollAndEmitEvents()
     {
         if (!IsBound) return;
-        var current = ReadEntities(includeHidden: true); // full list for transition tracking; events below only fire for visible entities
-        var currentById = new Dictionary<string, MapEntityDto>();
 
-        foreach (var e in current)
+        var current = ReadEntities(includeHidden: true);
+        var next = new Dictionary<string, MapEntityDto>(current.Count);
+
+        foreach (var entity in current)
         {
-            currentById[e.Id] = e;
-            _previous.TryGetValue(e.Id, out var prev);
+            next[entity.Id] = entity;
+            _previous.TryGetValue(entity.Id, out var previous);
 
-            if (e.Visible && (prev == null || !prev.Visible))
+            if (entity.Visible)
             {
-                EventLog.Append("entity_revealed", "map",
-                    $"{e.Id} ({e.Role}) revealed at bearing {e.BearingDeg:F1}°, {e.DistanceKm:F2} km", e);
-            }
-            else if (prev != null && e.Visible)
-            {
-                var moved = Math.Abs(e.MapX - prev.MapX) + Math.Abs(e.MapY - prev.MapY) > 0.01f;
-                if (moved)
-                    EventLog.Append("entity_moved", "map",
-                        $"{e.Id} moved to bearing {e.BearingDeg:F1}°, {e.DistanceKm:F2} km", e);
-                if (e.Health < prev.Health && e.IsAlive)
-                    EventLog.Append("entity_damaged", "map",
-                        $"{e.Id} damaged: {e.Health}/{e.MaxHealth}", e);
+                if (previous == null || !previous.Visible)
+                {
+                    EventLog.Append("entity_revealed", "map",
+                        $"{entity.Id} ({entity.Role}) 显现: 方位 {entity.BearingDeg:F1}°, {entity.DistanceKm:F2} km",
+                        entity);
+                }
+                else
+                {
+                    if (Math.Abs(entity.MapX - previous.MapX) + Math.Abs(entity.MapY - previous.MapY) > MoveEpsilonLocal)
+                    {
+                        EventLog.Append("entity_moved", "map",
+                            $"{entity.Id} 移动至: 方位 {entity.BearingDeg:F1}°, {entity.DistanceKm:F2} km",
+                            entity);
+                    }
+
+                    if (entity.Health < previous.Health && entity.IsAlive)
+                    {
+                        EventLog.Append("entity_damaged", "map",
+                            $"{entity.Id} 受损: {entity.Health}/{entity.MaxHealth}", entity);
+                    }
+                }
             }
 
-            if (prev != null && prev.Visible && prev.IsAlive && !e.IsAlive)
-                EventLog.Append("entity_destroyed", "map", $"{e.Id} destroyed", e);
+            // Destruction requires the target to have been VISIBLE last poll. A kill inside the
+            // fog is therefore never reported — by the time it re-emerges prev.IsAlive is already
+            // false. Deliberate: reporting it would hand the LLM knowledge the player lacks.
+            if (previous != null && previous.Visible && previous.IsAlive && !entity.IsAlive)
+            {
+                EventLog.Append("entity_destroyed", "map", $"{entity.Id} 已摧毁", entity);
+            }
         }
 
-        _previous = currentById;
+        _previous = next;
     }
 }

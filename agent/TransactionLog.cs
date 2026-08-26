@@ -1,45 +1,59 @@
+﻿using System.Text;
 using System.Text.Json;
 using MelonLoader.Utils;
 
 namespace IronNestAgentBridge.Agent;
 
 /// <summary>
-/// Durable JSONL transaction log: decisions, staged/dispatched missions, results, errors.
-/// One file per day under UserData\IronNestAgentBridge\. Flushed per line so a crash
-/// loses nothing; thread-safe (agent thread + main thread both write).
+/// Append-only JSONL audit trail shared by the whole mod: decisions, tool calls, usage,
+/// requisitions, resets.
+///
+/// Invariant: the log can never take the agent down. Every failure — full disk, permissions,
+/// a bad path — is swallowed.
 /// </summary>
 public static class TransactionLog
 {
-    private static readonly object Gate = new();
-    private static string? _dir;
+    /// <summary>Types in use: usage, compact, tool, decision, fire, cancel, adjust, turret,
+    /// agent, mission, reset, requisition, scout_plane.</summary>
+    private static readonly object Lock = new();
 
-    private static string Dir
-    {
-        get
-        {
-            if (_dir == null)
-            {
-                _dir = Path.Combine(MelonEnvironment.UserDataDirectory, "IronNestAgentBridge");
-                Directory.CreateDirectory(_dir);
-            }
-            return _dir;
-        }
-    }
+    // Default escaping keeps the file pure ASCII (non-ASCII becomes \uXXXX), which is what the
+    // existing logs look like. The explicit UTF-8 writer below is still required: a Chinese
+    // Windows would otherwise default to GBK.
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>
+    /// Writes one line and flushes it. Both the agent background thread and the Unity main
+    /// thread call this, so the whole operation is held under one lock.
+    /// </summary>
     public static void Write(string type, string text, object? data = null)
     {
         try
         {
+            var dir = Path.Combine(MelonEnvironment.UserDataDirectory, "IronNestAgentBridge");
+
+            // Local date, recomputed per write: the file rolls over at midnight without a restart.
+            var path = Path.Combine(dir, $"transactions-{DateTime.Now:yyyyMMdd}.jsonl");
+
             var line = JsonSerializer.Serialize(new
             {
                 ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
                 type,
                 text,
                 data,
-            });
-            lock (Gate)
-                File.AppendAllText(Path.Combine(Dir, $"transactions-{DateTime.Now:yyyyMMdd}.jsonl"), line + Environment.NewLine);
+            }, JsonOptions);
+
+            lock (Lock)
+            {
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(path, line + "\n", Utf8NoBom);
+            }
         }
-        catch { /* logging must never break the agent */ }
+        catch
+        {
+            // Deliberately silent.
+        }
     }
 }

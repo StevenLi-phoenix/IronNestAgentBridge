@@ -5,6 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!-- Sources carry Chinese literals, U+00B0, U+2192 and box-drawing glyphs. Pinning the
+         compiler code page to UTF-8 keeps a Chinese Windows (ANSI = GBK) from mis-decoding
+         any source file that was written without a BOM. -->
+    <CodePage>65001</CodePage>
+    <!-- Must not be dropped: otherwise the artifact lands in Mods\net6.0\ and MelonLoader
+         never loads it. -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GameDir>D:\SteamLibrary\steamapps\common\Iron Nest Heavy Turret Simulator</GameDir>
     <OutputPath>$(GameDir)\Mods\</OutputPath>
@@ -13,10 +19,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- agent\agent.py's virtualenv must never be globbed into the build. -->
     <Compile Remove="agent\.venv\**" />
     <None Remove="agent\.venv\**" />
   </ItemGroup>
 
+  <!-- All references are Private=false: never copy Unity/MelonLoader assemblies into Mods\,
+       they would collide with the versions the game ships. -->
   <ItemGroup>
     <Reference Include="MelonLoader">
       <HintPath>$(GameDir)\MelonLoader\net6\MelonLoader.dll</HintPath>
@@ -62,6 +71,8 @@
       <HintPath>$(GameDir)\MelonLoader\Il2CppAssemblies\Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Include name deliberately differs from the file name (code says
+         `using UnityEngine.InputSystem`); pre-existing fact, do not "fix". -->
     <Reference Include="UnityEngine.InputSystem">
       <HintPath>$(GameDir)\MelonLoader\Il2CppAssemblies\Unity.InputSystem.dll</HintPath>
       <Private>false</Private>
