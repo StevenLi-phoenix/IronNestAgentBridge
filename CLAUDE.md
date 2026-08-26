@@ -164,6 +164,10 @@
 - 征用点余额：`MissionStatsTracker.Instance.requisitionPoints`（Int32，游戏侧 ProtectedInt 防篡改）
   → `AmmoReader.ReadRequisitionPoints()` → 快照 `RequisitionPoints` + 快照文本"征用点余额"行；
   购买完成（requisition 事件）与炮弹出膛（shell_fired 事件）都附 `· 征用点余额 N`（BalanceSuffix）。
+- **陷阱（事故记录）：游戏运行时严禁直接构建 IronNestFCS.Logic.csproj**——它默认输出进
+  `UserData\IronNestFCS\`，热重载会**当场重置正在工作的 FCS**（队列/校准/任务全丢）。
+  游戏在跑时必须 `-p:OutputPath=bin\staging\` 构建验证，待用户确认（关游戏或明说可以重置）
+  再把 DLL 拷进 UserData。部署前先 Get-Process 查游戏。
 - 任务时效：fire 的 `validForSeconds`（可选）→ `ArtilleryTask.validForSeconds` +
   `firstEnqueuedAt`（首次入队时间，抢占回队不重置）；TaskDispatcher 规划轮内快检 +
   每秒 SweepExpiredTasks 独立扫——**只撤在队列里等待的**，已上炮不受影响；过期走
