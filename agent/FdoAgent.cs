@@ -134,6 +134,9 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
   没有情报时对**怀疑程度最高的位置甚至空地**打STAR效力侦察(炸开一片迷雾本身就是收益),
   或排一条覆盖可疑区的侦察机航线。每轮自查: 本轮既无开火也无在途任务时,
   必须给出主动侦察动作, 或写明具体的等待理由(如征用点不足)。
+  **待命例外(剧情关)**: 若战场无任何合法目标、电文是叙事/道德内容而非可执行命令
+  (如战役收尾的谴责桥段), 不要为凑动作而侦察或开火——明确写"进入待命: 本关无战术
+  局面"即可, 后续复查维持待命结论, 等待指挥官直令。
   反炮兵关卡的权衡: 存在敌方反炮兵威胁(电文警告/反炮击倒计时)时, STAR也是炮弹,
   每次发射同样暴露炮位/推进敌方测定——盲射(含STAR)依然允许, 但要有意识地权衡:
   征用侦察卡(侦察机/前线观察员)是不暴露炮位的侦察手段; 开火则倾向攒好情报后集中速打,
@@ -589,6 +592,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 {
                     _eventCursor = events[^1].Seq;
                     idleSlices = 0;
+                    _idleRechecks = 0;   // real events end any idle backoff
 
                     // Debounce: bursts arrive over a second or two (telegraph lines printing,
                     // multi-entity reveals). Keep collecting until the stream is quiet for 1s
@@ -610,9 +614,14 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
                 }
                 else
                 {
-                    if (++idleSlices < RecheckAfterSlices)
+                    // Idle backoff: each consecutive no-event recheck doubles the wait (60s,
+                    // 2m, 4m, 8m cap). A narrative/no-target endgame otherwise burns an LLM
+                    // round per minute for nothing; any real event resets the cadence.
+                    var threshold = RecheckAfterSlices * Math.Min(8, 1 << Math.Min(3, _idleRechecks));
+                    if (++idleSlices < threshold)
                         continue;
                     idleSlices = 0;
+                    _idleRechecks++;
                     events = new List<BridgeEvent>
                     {
                         new() { Source = "agent", Type = "recheck", Text = "定时复查: 无新事件, 重新评估当前战场态势", GameTime = EventLog.GameClock },
@@ -1116,6 +1125,7 @@ FCS会处理好一切。fcs.pendingCount/leftTask/rightTask才反映任务执行
     }
 
     private int _firesThisRound;
+    private int _idleRechecks;
 
     /// <summary>The fire tool: one mission per call, executed immediately during the round.</summary>
     private string ExecuteFire(JsonElement action)
